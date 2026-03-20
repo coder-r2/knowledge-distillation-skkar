@@ -19,7 +19,7 @@ def main():
     print(f"Using device: {device}")
 
     # --- Hyperparameters ---
-    epochs = 150
+    epochs = 200
     learning_rate = 0.001
     batch_size = 128
 
@@ -42,6 +42,21 @@ def main():
     baseline_criterion = nn.CrossEntropyLoss()
     baseline_optimizer = optim.Adam(baseline_model.parameters(), lr=learning_rate)
 
+    # --- Telemetry Storage ---
+    # Stores metrics every 10 epochs for plotting
+    sd_history = {
+        'epochs': [],
+        'train_loss': [],
+        'ece': [[] for _ in range(4)], # List for each of the 4 exits
+        'acc': [[] for _ in range(4)]
+    }
+    baseline_history = {
+        'epochs': [],
+        'train_loss': [],
+        'ece': [],
+        'acc': []
+    }
+
     # ==========================================
     # 1. TRAIN SELF-DISTILLATION MODEL
     # ==========================================
@@ -50,15 +65,19 @@ def main():
         loss = train_sd_epoch(sd_model, train_loader, sd_optimizer, sd_criterion, device, epoch, epochs)
 
         if epoch % 10 == 0:
-            print(f"\n--- Epoch [{epoch}/{epochs}] SD Periodic Evaluation ---")
-            print(f"Training Loss: {loss:.4f}")
+            sd_history['epochs'].append(epoch)
+            sd_history['train_loss'].append(loss)
+            
+            # Evaluate using the validation loader
             val_results = evaluate_sd(sd_model, val_loader, device, ece_metric, num_exits=4)
-            for res in val_results:
-                print(f"Exit {res['exit']} - Val Acc: {res['acc']:.2f}% | Val ECE: {res['ece']:.2f}%")
-            print("-" * 40)
+            for i, res in enumerate(val_results):
+                sd_history['ece'][i].append(res['ece'])
+                sd_history['acc'][i].append(res['acc'])
+            
+            print(f"Epoch [{epoch}/{epochs}] SD Loss: {loss:.4f} | Exit 1 Val Acc: {val_results[0]['acc']:.2f}%")
 
     print("\nSD Training Complete. Saving weights...")
-    torch.save(sd_model.state_dict(), 'resnet18_self_distillation.pth')
+    torch.save(sd_model.state_dict(), 'saved_models/resnet18_self_distillation.pth')
 
     print("Running Final Evaluation on TEST Set...")
     sd_final_results = evaluate_sd(sd_model, test_loader, device, ece_metric, num_exits=4)
@@ -92,43 +111,35 @@ def main():
     print(f"Baseline - Acc: {baseline_results['acc']:.2f}% | ECE: {baseline_results['ece']:.2f}% | Time: {baseline_time:.2f} ms")
 
     # ==========================================
-    # 3. PLOT RESULTS
+    # 3. PLOT CONVERGENCE GRAPHS
     # ==========================================
-    sd_accuracies = [res['acc'] for res in sd_final_results]
-    sd_eces = [res['ece'] for res in sd_final_results]
+    plt.figure(figsize=(15, 6))
 
-    plt.figure(figsize=(12, 5))
-
-    # Accuracy vs Inference Time
+    # Graph 1: Training Loss vs Epoch
     plt.subplot(1, 2, 1)
-    plt.plot(sd_times, sd_accuracies, marker='o', linestyle='-', color='b', label='SD Exits (1-4)')
-    for i, (x, y) in enumerate(zip(sd_times, sd_accuracies)):
-        plt.annotate(f'Exit {i+1}', (x, y), textcoords="offset points", xytext=(0,10), ha='center')
-    plt.scatter(baseline_time, baseline_results['acc'], color='r', s=100, label='Baseline', zorder=5)
-    
-    plt.title('Accuracy vs. Inference Time')
-    plt.xlabel('Inference Time (ms per batch)')
-    plt.ylabel('Test Accuracy (%)')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.plot(sd_history['epochs'], sd_history['train_loss'], label='SD Total Loss', color='blue', linewidth=2)
+    plt.plot(baseline_history['epochs'], baseline_history['train_loss'], label='Baseline Loss', color='red', linestyle='--')
+    plt.title('Training Loss Convergence')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
     plt.legend()
+    plt.grid(True, alpha=0.3)
 
-    # ECE Plot
+    # Graph 2: ECE vs Epoch
     plt.subplot(1, 2, 2)
-    labels = ['Exit 1', 'Exit 2', 'Exit 3', 'Exit 4', 'Baseline']
-    eces = sd_eces + [baseline_results['ece']]
-    colors = ['skyblue', 'skyblue', 'skyblue', 'royalblue', 'tomato']
-
-    bars = plt.bar(labels, eces, color=colors)
-    plt.title('Expected Calibration Error (Lower is Better)')
+    colors = ['#c6e2ff', '#7eb6ff', '#2171ed', '#00008b'] # Light to dark blue for exits
+    for i in range(4):
+        plt.plot(sd_history['epochs'], sd_history['ece'][i], label=f'SD Exit {i+1}', color=colors[i])
+    
+    plt.plot(baseline_history['epochs'], baseline_history['ece'], label='Baseline', color='red', linewidth=2, linestyle='--')
+    plt.title('Validation ECE vs. Epoch')
+    plt.xlabel('Epoch')
     plt.ylabel('ECE (%)')
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval + 0.1, f'{yval:.2f}%', ha='center', va='bottom')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig('exp1_results.png')
+    plt.savefig('experiment_convergence.png')
     plt.show()
 
 if __name__ == "__main__":
