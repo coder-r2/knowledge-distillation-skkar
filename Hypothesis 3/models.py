@@ -1,0 +1,122 @@
+import torch
+import torch.nn as nn
+from torchvision.models.resnet import resnet18
+
+class ProjectionBottleneck(nn.Module):
+    """Projects shallow features to match the deepest feature map dimensions for L2 Hint Loss."""
+    def __init__(self, in_channels, out_channels, downsample_factor):
+        super().__init__()
+        self.project = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=downsample_factor, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.project(x)
+
+class SelfDistillationResNet18(nn.Module):
+    def __init__(self, num_classes=8, in_channels=3):
+        super().__init__()
+        # Load base ResNet18
+        base_model = resnet18(pretrained=False)
+
+        # Modify initial conv for 32x32 images (like CIFAR/BloodMNIST) instead of 224x224 ImageNet
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = base_model.bn1
+        self.relu = base_model.relu
+        # We skip the maxpool to preserve spatial resolution for small images
+
+        self.layer1 = base_model.layer1 # 64 channels
+        self.layer2 = base_model.layer2 # 128 channels
+        self.layer3 = base_model.layer3 # 256 channels
+        self.layer4 = base_model.layer4 # 512 channels
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # Classifiers for the 4 exits
+        self.classifier1 = nn.Linear(64, num_classes)
+        self.classifier2 = nn.Linear(128, num_classes)
+        self.classifier3 = nn.Linear(256, num_classes)
+        self.classifier4 = nn.Linear(512, num_classes) # Deepest (Teacher)
+
+        # Bottlenecks to align feature maps (F_i) to deepest feature map (F_C) which is 512 channels
+        # layer1 out: 64ch, spatial 32x32 -> needs to match layer4 out: 512ch, spatial 4x4 (downsample 8x)
+        self.bottleneck1 = ProjectionBottleneck(64, 512, downsample_factor=8)
+        self.bottleneck2 = ProjectionBottleneck(128, 512, downsample_factor=4)
+        self.bottleneck3 = ProjectionBottleneck(256, 512, downsample_factor=2)
+
+    def forward(self, x):
+        # Base features
+        x = self.relu(self.bn1(self.conv1(x)))
+
+        # Exit 1
+        f1 = self.layer1(x)
+        out1 = self.classifier1(self.avgpool(f1).flatten(1))
+        b1 = self.bottleneck1(f1)
+
+        # Exit 2
+        f2 = self.layer2(f1)
+        out2 = self.classifier2(self.avgpool(f2).flatten(1))
+        b2 = self.bottleneck2(f2)
+
+        # Exit 3
+        f3 = self.layer3(f2)
+        out3 = self.classifier3(self.avgpool(f3).flatten(1))
+        b3 = self.bottleneck3(f3)
+
+        # Exit 4 (Deepest / Teacher)
+        f4 = self.layer4(f3)
+        out4 = self.classifier4(self.avgpool(f4).flatten(1))
+        b4 = f4 # Already at target dimension
+
+        logits = [out1, out2, out3, out4]
+        bottlenecks = [b1, b2, b3, b4]
+
+        return logits, bottlenecks
+
+    def early_exit_forward(self, x, exit_idx):
+        """Used strictly for inference timing. Stops computation at the specified exit."""
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.layer1(x)
+        if exit_idx == 0:
+            return self.classifier1(self.avgpool(x).flatten(1))
+
+        x = self.layer2(x)
+        if exit_idx == 1:
+            return self.classifier2(self.avgpool(x).flatten(1))
+
+        x = self.layer3(x)
+        if exit_idx == 2:
+            return self.classifier3(self.avgpool(x).flatten(1))
+
+        x = self.layer4(x)
+        return self.classifier4(self.avgpool(x).flatten(1))
+
+class BaselineResNet18(nn.Module):
+    def __init__(self, num_classes=8, in_channels=3):
+        super().__init__()
+        base_model = resnet18(pretrained=False)
+
+        # Match the SD model's initial layers for 32x32 images
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = base_model.bn1
+        self.relu = base_model.relu
+
+        self.layer1 = base_model.layer1
+        self.layer2 = base_model.layer2
+        self.layer3 = base_model.layer3
+        self.layer4 = base_model.layer4
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x).flatten(1)
+        return self.fc(x)
