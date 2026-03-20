@@ -26,7 +26,6 @@ def main():
     # --- Data Loading ---
     print("Loading datasets...")
     train_loader, val_loader, test_loader, in_channels, num_classes = get_medmnist_dataloaders('bloodmnist', batch_size)
-    print(f"Classes: {num_classes}, Input Channels: {in_channels}")
 
     # --- Instantiation ---
     # Global evaluation metric
@@ -77,7 +76,7 @@ def main():
             print(f"Epoch [{epoch}/{epochs}] SD Loss: {loss:.4f} | Exit 1 Val Acc: {val_results[0]['acc']:.2f}%")
 
     print("\nSD Training Complete. Saving weights...")
-    torch.save(sd_model.state_dict(), 'saved_models/resnet18_self_distillation.pth')
+    torch.save(sd_model.state_dict(), 'saved_models/resnet18_bloodmnist_self_distilled.pth')
 
     print("Running Final Evaluation on TEST Set...")
     sd_final_results = evaluate_sd(sd_model, test_loader, device, ece_metric, num_exits=4)
@@ -102,7 +101,7 @@ def main():
         loss = train_standard_epoch(baseline_model, train_loader, baseline_optimizer, baseline_criterion, device, epoch, epochs)
 
     print("\nBaseline Training Complete. Saving weights...")
-    torch.save(baseline_model.state_dict(), 'resnet18_baseline.pth')
+    torch.save(baseline_model.state_dict(), 'saved_models/resnet18_bloodmnist_baseline.pth')
 
     print("Evaluating Baseline on Test Set...")
     baseline_results = evaluate_standard(baseline_model, test_loader, device, ece_metric)
@@ -114,6 +113,7 @@ def main():
     # 3. PLOT CONVERGENCE GRAPHS
     # ==========================================
     plt.figure(figsize=(15, 6))
+    plt.suptitle('Performance Comparison: Self-Distillation vs. Standard ResNet-18 (BloodMNIST)', fontsize=16)
 
     # Graph 1: Training Loss vs Epoch
     plt.subplot(1, 2, 1)
@@ -138,8 +138,8 @@ def main():
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    plt.tight_layout()
-    plt.savefig('experiment_convergence.png')
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig('results/resnet18_bloodmnist.png')
     plt.show()
 
 if __name__ == "__main__":
