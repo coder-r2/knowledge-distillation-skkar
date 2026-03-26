@@ -8,14 +8,14 @@ import numpy as np
 
 # Import custom modules
 from datasets import get_medmnist_dataloaders
-from models import BaselineResNet50, SelfDistillationResNet50
+from models import BaselineResNet18, SelfDistillationResNet18
 from losses import SelfDistillationLoss
 from train import (
     ECEMetric, 
     train_standard_epoch, evaluate_standard, measure_standard_inference,
     train_sd_epoch, evaluate_sd, measure_sd_inference
 )
-# Assuming you renamed "calibration curve.py" to "calibration_curve.py"
+
 from calibration_curve import plot_calibration_curves
 
 def set_seed(seed=42):
@@ -37,8 +37,8 @@ def main():
     # Ensure save directory exists
     save_dir = 'Hypothesis 3/saved_models'
     os.makedirs(save_dir, exist_ok=True)
-    sd_save_path = os.path.join(save_dir, 'resnet50_bloodmnist_self_distilled_best.pth')
-    baseline_save_path = os.path.join(save_dir, 'resnet50_bloodmnist_baseline_best.pth')
+    sd_save_path = os.path.join(save_dir, 'resnet18_bloodmnist_self_distilled_best.pth')
+    baseline_save_path = os.path.join(save_dir, 'resnet18_bloodmnist_baseline_best.pth')
 
     # --- Hyperparameters ---
     epochs = 250
@@ -54,12 +54,12 @@ def main():
     ece_metric = ECEMetric(n_bins=15)
 
     # SD Model
-    sd_model = SelfDistillationResNet50(num_classes=num_classes, in_channels=in_channels).to(device)
+    sd_model = SelfDistillationResNet18(num_classes=num_classes, in_channels=in_channels).to(device)
     sd_criterion = SelfDistillationLoss()
     sd_optimizer = optim.Adam(sd_model.parameters(), lr=learning_rate)
 
     # Baseline Model
-    baseline_model = BaselineResNet50(num_classes=num_classes, in_channels=in_channels).to(device)
+    baseline_model = BaselineResNet18(num_classes=num_classes, in_channels=in_channels).to(device)
     baseline_criterion = nn.CrossEntropyLoss()
     baseline_optimizer = optim.Adam(baseline_model.parameters(), lr=learning_rate)
 
@@ -116,7 +116,7 @@ def main():
     # ==========================================
     # 2. TRAIN BASELINE MODEL
     # ==========================================
-    print("\n--- Starting Baseline ResNet-50 Training ---")
+    print("\n--- Starting Baseline ResNet-18 Training ---")
     best_baseline_val_loss = float('inf')
     baseline_patience_counter = 0
 
@@ -179,7 +179,7 @@ def main():
     # ==========================================
     os.makedirs('Hypothesis 3/results', exist_ok=True)
     plt.figure(figsize=(15, 6))
-    plt.suptitle('Performance Comparison: Self-Distillation vs. Standard ResNet-50', fontsize=16)
+    plt.suptitle('Performance Comparison: Self-Distillation vs. Standard ResNet-18', fontsize=16)
 
     # Graph 1: Loss vs Epoch (Train and Val)
     plt.subplot(1, 2, 1)
@@ -206,7 +206,7 @@ def main():
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('Hypothesis 3/results/resnet50_bloodmnist_convergence.png')
+    plt.savefig('Hypothesis 3/results/resnet18_bloodmnist_convergence.png')
     plt.show()
 
     # ==========================================
@@ -216,13 +216,13 @@ def main():
     models_to_plot = [
         {
             'path': baseline_save_path,
-            'class': BaselineResNet50,
-            'name': 'ResNet-50 Baseline (Best)'
+            'class': BaselineResNet18,
+            'name': 'ResNet-18 Baseline (Best)'
         },
         {
             'path': sd_save_path,
-            'class': SelfDistillationResNet50,
-            'name': 'ResNet-50 Self-Distilled (Best)'
+            'class': SelfDistillationResNet18,
+            'name': 'ResNet-18 Self-Distilled (Best)'
         }
     ]
     plot_calibration_curves(models_to_plot)

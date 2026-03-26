@@ -130,5 +130,5 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         ax.grid(True, linestyle='--', alpha=0.6)
 
     fig.tight_layout()
-    plt.savefig('Hypothesis 3/results/calibration_curves.png')
+    plt.savefig(f'Hypothesis 3/results/{model_name}_calibration_curves.png')
     plt.show()
