@@ -50,15 +50,20 @@ def train_standard_epoch(model, dataloader, optimizer, criterion, device, curren
 
     return running_loss / len(dataloader)
 
-def evaluate_standard(model, dataloader, device, ece_metric):
+def evaluate_standard(model, dataloader, device, ece_metric, criterion=None):
     model.eval()
     all_targets = []
     all_logits = []
+    total_loss = 0.0
 
     with torch.no_grad():
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(device), targets.to(device).squeeze().long()
             logits = model(inputs)
+
+            if criterion is not None:
+                loss = criterion(logits, targets)
+                total_loss += loss.item()
 
             all_targets.append(targets)
             all_logits.append(logits)
@@ -69,8 +74,12 @@ def evaluate_standard(model, dataloader, device, ece_metric):
     _, preds = torch.max(all_logits, 1)
     acc = (preds == all_targets).float().mean().item() * 100
     ece = ece_metric.compute(all_logits, all_targets)
+    
+    result = {"acc": acc, "ece": ece}
+    if criterion is not None:
+        result["loss"] = total_loss / len(dataloader)
 
-    return {"acc": acc, "ece": ece}
+    return result
 
 def measure_standard_inference(model, dummy_input, num_runs=100):
     model.eval()
@@ -119,10 +128,11 @@ def train_sd_epoch(model, dataloader, optimizer, criterion, device, current_epoc
 
     return running_loss / len(dataloader)
 
-def evaluate_sd(model, dataloader, device, ece_metric, num_exits=4):
+def evaluate_sd(model, dataloader, device, ece_metric, criterion=None, num_exits=4):
     model.eval()
     all_targets = []
     all_logits = [[] for _ in range(num_exits)]
+    total_deepest_loss = 0.0
 
     pbar = tqdm(dataloader, desc="Evaluating SD", leave=False)
 
@@ -130,6 +140,11 @@ def evaluate_sd(model, dataloader, device, ece_metric, num_exits=4):
         for inputs, targets in pbar:
             inputs, targets = inputs.to(device), targets.to(device).squeeze().long()
             logits_list, _ = model(inputs)
+
+            if criterion is not None:
+                # Calculate validation loss strictly for the deepest exit
+                loss = criterion(logits_list[-1], targets)
+                total_deepest_loss += loss.item()
 
             all_targets.append(targets)
             for i in range(num_exits):
@@ -143,7 +158,13 @@ def evaluate_sd(model, dataloader, device, ece_metric, num_exits=4):
         _, preds = torch.max(cat_logits, 1)
         acc = (preds == all_targets).float().mean().item() * 100
         ece = ece_metric.compute(cat_logits, all_targets)
-        results.append({"exit": i+1, "acc": acc, "ece": ece})
+        
+        res_dict = {"exit": i+1, "acc": acc, "ece": ece}
+        # Attach the calculated loss only to the deepest exit's results
+        if i == num_exits - 1 and criterion is not None:
+            res_dict["loss"] = total_deepest_loss / len(dataloader)
+            
+        results.append(res_dict)
 
     return results
 

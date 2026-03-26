@@ -1,15 +1,9 @@
-
 import torch
-import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-from torchvision.models.resnet import resnet18
-from torch.utils.data import DataLoader
 
-# Assuming datasets.py and models.py are in the 'Hypothesis 3' directory
-# and we can import from them.
+# Import the dataloader function
 from datasets import get_medmnist_dataloaders
-from models import SelfDistillationResNet18, BaselineResNet18
 
 def plot_calibration_curves(models_to_plot, num_bins=15):
     """
@@ -24,11 +18,11 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
     """
     # --- Device Configuration ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"Using device for calibration evaluation: {device}")
 
     # --- Load Data ---
     _, _, test_loader, n_channels, n_classes = get_medmnist_dataloaders('bloodmnist', batch_size=128)
-    print("Test data loaded.")
+    print("Test data loaded for calibration curves.")
 
     num_models = len(models_to_plot)
     fig, axes = plt.subplots(1, num_models, figsize=(8 * num_models, 6), sharey=True)
@@ -41,11 +35,8 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         model_name = model_info['name']
         ax = axes[i]
 
-        # --- Load Model ---
-        if model_class == SelfDistillationResNet18:
-            model = model_class(num_classes=n_classes, in_channels=n_channels).to(device)
-        else: # BaselineResNet18
-            model = model_class(num_classes=n_classes, in_channels=n_channels).to(device)
+        # --- Load Model dynamically ---
+        model = model_class(num_classes=n_classes, in_channels=n_channels).to(device)
 
         try:
             model.load_state_dict(torch.load(model_path, map_location=device))
@@ -53,6 +44,7 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         except Exception as e:
             print(f"Error loading model '{model_name}': {e}")
             try:
+                # Handle potential DataParallel wrapper issues
                 state_dict = torch.load(model_path, map_location=device)
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
@@ -62,7 +54,7 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
                 model.load_state_dict(new_state_dict)
                 print(f"Model '{model_name}' loaded successfully after removing 'module.' prefix.")
             except Exception as e_inner:
-                print(f"Failed to load model '{model_name}' even after attempting to fix DataParallel wrapper: {e_inner}")
+                print(f"Failed to load model '{model_name}' even after attempting to fix wrapper: {e_inner}")
                 continue # Skip to the next model
 
         model.eval()
@@ -77,10 +69,11 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
 
                 outputs = model(images)
                 
-                if isinstance(outputs, tuple) and len(outputs) == 2: # Self-distillation model
+                # Check output type to handle both Baseline (Tensor) and SD Models (Tuple of Lists)
+                if isinstance(outputs, tuple) and len(outputs) == 2:
                     logits, _ = outputs
-                    final_logits = logits[-1]
-                elif isinstance(outputs, torch.Tensor): # Baseline model
+                    final_logits = logits[-1] # Deepest exit
+                elif isinstance(outputs, torch.Tensor):
                     final_logits = outputs
                 else:
                     raise TypeError(f"Unexpected model output type for '{model_name}': {type(outputs)}")
@@ -96,8 +89,6 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         all_confidences = np.array(all_confidences)
         all_corrects = np.array(all_corrects)
         
-        print(f"Total predictions for '{model_name}': {len(all_confidences)}")
-
         # --- Binning ---
         bin_boundaries = np.linspace(0, 1, num_bins + 1)
         bin_lowers = bin_boundaries[:-1]
@@ -119,12 +110,9 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         ece = np.sum((bin_counts / len(all_corrects)) * np.abs(bin_fraction_of_positives - bin_avg_confidence))
         print(f"Expected Calibration Error (ECE) for '{model_name}': {ece:.4f}")
 
-
         # --- Plotting ---
         non_empty_bins = bin_counts > 0
         
-        # Plot the calibration curve as a line with markers
-        # We plot the average confidence in each bin vs. the fraction of positives in that bin
         ax.plot(bin_avg_confidence[non_empty_bins], bin_fraction_of_positives[non_empty_bins], 
                 'b-o', label='Calibration Curve')
 
@@ -134,6 +122,7 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         ax.set_xlabel('Mean Predicted Probability (Confidence)')
         if i == 0:
             ax.set_ylabel('Fraction of Positives (Accuracy)')
+        
         ax.set_title(f'Calibration Curve for {model_name}\nECE: {ece:.4f}')
         ax.legend()
         ax.set_xlim(0, 1)
@@ -141,22 +130,5 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         ax.grid(True, linestyle='--', alpha=0.6)
 
     fig.tight_layout()
+    plt.savefig('Hypothesis 3/results/calibration_curves.png')
     plt.show()
-
-
-if __name__ == '__main__':
-    # --- Configuration for side-by-side plotting ---
-    models_to_plot = [
-        {
-            'path': '/home/rrg/umc203/project/Hypothesis 3/saved_models/resnet18_bloodmnist_baseline.pth',
-            'class': BaselineResNet18,
-            'name': 'ResNet-18 Baseline'
-        },
-        {
-            'path': '/home/rrg/umc203/project/Hypothesis 3/saved_models/resnet18_bloodmnist_self_distilled.pth',
-            'class': SelfDistillationResNet18,
-            'name': 'ResNet-18 Self-Distilled'
-        }
-    ]
-
-    plot_calibration_curves(models_to_plot)
