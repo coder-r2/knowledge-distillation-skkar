@@ -93,3 +93,51 @@ def get_ham10000_dataloaders(data_dir, batch_size=128):
 
     # HAM10000 has 7 skin lesion classes, and the images are RGB (3 channels)
     return train_loader, val_loader, test_loader, 3, 7
+
+# ==========================================
+# CHEST X-RAY (PNEUMONIA) DATASET
+# ==========================================
+
+def get_chestxray_dataloaders(data_dir, batch_size=128):
+    """
+    Loads Chest X-Ray images using ImageFolder.
+    Assumes standard Kaggle directory structure:
+        data_dir/
+            train/
+                NORMAL/
+                PNEUMONIA/
+            val/
+                NORMAL/
+                PNEUMONIA/
+            test/
+                NORMAL/
+                PNEUMONIA/
+    """
+    # Standard ImageNet normalization
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    eval_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    train_dataset = ImageFolder(os.path.join(data_dir, 'train'), transform=train_transform)
+    val_dataset = ImageFolder(os.path.join(data_dir, 'val'), transform=eval_transform)
+    test_dataset = ImageFolder(os.path.join(data_dir, 'test'), transform=eval_transform)
+
+    train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+
+    # 3 channels (RGB converted by ImageFolder), 2 classes (NORMAL vs PNEUMONIA)
+    return train_loader, val_loader, test_loader, 3, 2

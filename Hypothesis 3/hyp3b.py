@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 import random
 import numpy as np
 
-from datasets import get_ham10000_dataloaders
+# Import custom modules
+from datasets import get_chestxray_dataloaders
 from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k
-# We use your direct Calibration loss instead of the Meta/Learnable classes
 from losses import CalibrationAwareSelfDistillationLoss
 from train import (
     ECEMetric, 
@@ -34,23 +34,24 @@ def main():
 
     save_dir = 'Hypothesis 3/saved_models'
     os.makedirs(save_dir, exist_ok=True)
-    casd_save_path = os.path.join(save_dir, 'resnet18_ham10000_casd_best.pth')
-    baseline_save_path = os.path.join(save_dir, 'resnet18_ham10000_baseline_best.pth')
+    # Updated Save Paths
+    casd_save_path = os.path.join(save_dir, 'resnet18_chestxray_casd_best.pth')
+    baseline_save_path = os.path.join(save_dir, 'resnet18_chestxray_baseline_best.pth')
 
     epochs = 250
     patience = 30
     learning_rate = 0.001
-    batch_size = 128
+    batch_size = 64 # Lowered to 64 for VRAM
 
     print("Loading datasets...")
-    data_dir = 'Hypothesis 3/data/HAM10000'
-    train_loader, val_loader, test_loader, in_channels, num_classes = get_ham10000_dataloaders(data_dir, batch_size)
+    data_dir = 'Hypothesis 3/data/chest_xray/chest_xray'
+    train_loader, val_loader, test_loader, in_channels, num_classes = get_chestxray_dataloaders(data_dir, batch_size)
 
     ece_metric = ECEMetric(n_bins=15)
 
     casd_model = SelfDistillationResNet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
     
-    # Using your direct DECE penalty loss
+    # Using direct DECE penalty loss
     casd_criterion = CalibrationAwareSelfDistillationLoss(alpha=0.5, lambda_weight=0.01, beta=0.5, temperature=3.0).to(device)
     casd_optimizer = optim.Adam(casd_model.parameters(), lr=learning_rate)
 
@@ -66,7 +67,6 @@ def main():
     casd_patience_counter = 0
 
     for epoch in range(1, epochs + 1):
-        # We are back to using the standard, fast SD training epoch
         train_loss = train_sd_epoch(casd_model, train_loader, casd_optimizer, casd_criterion, device, epoch, epochs)
         
         val_results = evaluate_sd(casd_model, val_loader, device, ece_metric, criterion=nn.CrossEntropyLoss(), num_exits=4)
@@ -118,18 +118,9 @@ def main():
     baseline_results = evaluate_standard(baseline_model, test_loader, device, ece_metric)
     print(f"Baseline - Test Acc: {baseline_results['acc']:.2f}% | Test ECE: {baseline_results['ece']:.2f}%")
 
-    print("\nMeasuring Inference Throughput...")
-    dummy_batch = torch.randn(128, in_channels, 224, 224).to(device)
-    for exit_idx in range(4):
-        time_ms = measure_sd_inference(casd_model, dummy_batch, exit_idx)
-        print(f"CASD Exit {exit_idx+1} Inference Time: {time_ms:.2f} ms")
-        
-    baseline_time = measure_standard_inference(baseline_model, dummy_batch)
-    print(f"Baseline Inference Time: {baseline_time:.2f} ms")
-
     os.makedirs('Hypothesis 3/results', exist_ok=True)
     plt.figure(figsize=(15, 6))
-    plt.suptitle('FAST CASD Training Convergence (HAM10000)', fontsize=16)
+    plt.suptitle('FAST CASD Training Convergence (Chest X-Ray)', fontsize=16)
 
     plt.subplot(1, 2, 1)
     plt.plot(casd_history['epochs'], casd_history['train_loss'], label='CASD Train Loss', color='blue', alpha=0.6)
@@ -151,7 +142,7 @@ def main():
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('Hypothesis 3/results/resnet18_ham10000_fast_casd_convergence.png')
+    plt.savefig('Hypothesis 3/results/resnet18_chestxray_fast_casd_convergence.png')
     plt.show()
 
     print("\nGenerating Calibration Curves for Best Models...")
@@ -159,12 +150,12 @@ def main():
         {
             'path': baseline_save_path,
             'class': Baseline_Resnet18_H10k,
-            'name': 'ResNet-18 Baseline'
+            'name': 'ResNet-18 Baseline (Chest X-Ray)'
         },
         {
             'path': casd_save_path,
             'class': SelfDistillationResNet18_H10k,  
-            'name': 'ResNet-18 FAST CASD'
+            'name': 'ResNet-18 FAST CASD (Chest X-Ray)'
         }
     ]
     plot_calibration_curves(models_to_plot)
