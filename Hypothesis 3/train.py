@@ -2,6 +2,7 @@ import time
 import torch
 import torch.nn.functional as F
 from tqdm.auto import tqdm
+import higher
 
 class ECEMetric:
     """Calculates Expected Calibration Error using 15 bins."""
@@ -190,3 +191,68 @@ def measure_sd_inference(model, dummy_input, exit_idx, num_runs=100):
                 _ = model.early_exit_forward(dummy_input, exit_idx)
         end_time = time.perf_counter()
         return ((end_time - start_time) / num_runs) * 1000
+
+
+import higher
+
+def train_meta_sd_epoch(model, train_loader, val_loader, optimizer_model, meta_optimizer, 
+                        criterion_inner, criterion_outer, ls_module, device, current_epoch, total_epochs):
+    model.train()
+    running_loss = 0.0
+    val_iter = iter(val_loader) # Use validation data as the meta-set
+    
+    pbar = tqdm(train_loader, desc=f"Meta-SD Epoch [{current_epoch}/{total_epochs}]", leave=False)
+
+    for inputs, targets in pbar:
+        inputs, targets = inputs.to(device), targets.to(device).squeeze().long()
+
+        # 1. Fetch Meta-Validation batch
+        try:
+            val_inputs, val_targets = next(val_iter)
+        except StopIteration:
+            val_iter = iter(val_loader)
+            val_inputs, val_targets = next(val_iter)
+        val_inputs, val_targets = val_inputs.to(device), val_targets.to(device).squeeze().long()
+
+        # ==========================================
+        # 2. META UPDATE (Outer Loop)
+        # ==========================================
+        meta_optimizer.zero_grad()
+        
+        # Create a simulated computation graph using `higher`
+        with higher.innerloop_ctx(model, optimizer_model, copy_initial_weights=False) as (fmodel, diffopt):
+            
+            # --- Simulated Inner Step ---
+            logits_list, bottlenecks_list = fmodel(inputs)
+            smoothed_targets = ls_module(targets)
+            inner_loss = criterion_inner(logits_list, bottlenecks_list, smoothed_targets)
+            diffopt.step(inner_loss) # Update fmodel weights in simulation
+
+            # --- Outer Evaluation Step ---
+            val_logits_list, _ = fmodel(val_inputs)
+            # Calculate DECE + CE purely on the Teacher (Deepest Exit)
+            outer_loss = criterion_outer(val_logits_list[-1], val_targets)
+
+            # Backpropagate through the simulated update to tweak label smoothing parameters
+            outer_loss.backward()
+            
+        meta_optimizer.step()
+
+        # ==========================================
+        # 3. ACTUAL MODEL UPDATE (Inner Loop)
+        # ==========================================
+        optimizer_model.zero_grad()
+        logits_list, bottlenecks_list = model(inputs)
+        
+        # Generate the soft targets using the newly optimized smoothing parameters
+        with torch.no_grad():
+            smoothed_targets = ls_module(targets)
+            
+        loss = criterion_inner(logits_list, bottlenecks_list, smoothed_targets)
+        loss.backward()
+        optimizer_model.step()
+
+        running_loss += loss.item()
+        pbar.set_postfix({"batch_loss": f"{loss.item():.4f}"})
+
+    return running_loss / len(train_loader)

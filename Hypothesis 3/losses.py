@@ -174,3 +174,95 @@ class CalibrationAwareSelfDistillationLoss(nn.Module):
             total_loss += loss_i
 
         return total_loss
+    
+class LearnableLabelSmoothing(nn.Module):
+    """Equation from Section 3.3: Learns a non-uniform label smoothing distribution."""
+    def __init__(self, num_classes=7):
+        super().__init__()
+        self.num_classes = num_classes
+        # Strength of smoothing for each class. Init with 5% smoothing.
+        self.omega_s = nn.Parameter(torch.full((num_classes,), 0.05))
+        # Distribution of smoothing across incorrect classes. Init uniformly.
+        self.omega_d = nn.Parameter(torch.ones(num_classes, num_classes))
+
+    def forward(self, targets):
+        B = targets.size(0)
+        device = targets.device
+
+        # Restrict overall smoothing between 0 and 0.5 (as per paper)
+        omega_s_clamped = torch.clamp(self.omega_s, 0.0, 0.5)
+        
+        # Mask out the diagonal so a class doesn't smooth into itself
+        omega_d_positive = F.relu(self.omega_d)
+        mask = 1.0 - torch.eye(self.num_classes, device=device)
+        omega_d_masked = omega_d_positive * mask
+
+        # Normalize the distribution weights so they sum to 1
+        row_sums = omega_d_masked.sum(dim=1, keepdim=True) + 1e-8
+        omega_d_normalized = omega_d_masked / row_sums
+
+        # Generate the soft targets
+        smoothed_targets = torch.zeros(B, self.num_classes, device=device)
+        for i in range(B):
+            c = targets[i].item() # True class
+            w_s = omega_s_clamped[c]
+            
+            # Distribute the smoothing budget
+            smoothed_targets[i] = w_s * omega_d_normalized[c]
+            # Keep the remaining probability mass on the true class
+            smoothed_targets[i, c] += (1.0 - w_s)
+
+        return smoothed_targets
+
+class MetaObjectiveLoss(nn.Module):
+    """The Outer Loop Objective: Cross Entropy + Lambda * DECE"""
+    def __init__(self, n_bins=15, lambda_weight=0.5):
+        super().__init__()
+        self.lambda_weight = lambda_weight
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.dece_loss = DECELoss(n_bins=n_bins)
+
+    def forward(self, logits, targets):
+        targets = targets.squeeze().long()
+        ce = self.ce_loss(logits, targets)
+        dece = self.dece_loss(logits, targets)
+        return ce + (self.lambda_weight * dece)
+
+class SoftSelfDistillationLoss(nn.Module):
+    """Modified Self-Distillation loss that natively handles the smoothed soft targets."""
+    def __init__(self, alpha=0.5, lambda_weight=0.01, temperature=3.0):
+        super().__init__()
+        self.alpha = alpha
+        self.lambda_weight = lambda_weight
+        self.T = temperature
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.mse_loss = nn.MSELoss()
+
+    def forward(self, logits_list, bottlenecks_list, soft_targets):
+        total_loss = 0
+        num_classifiers = len(logits_list)
+
+        teacher_logits = logits_list[-1]
+        teacher_features = bottlenecks_list[-1]
+
+        with torch.no_grad():
+            teacher_probs = F.softmax(teacher_logits / self.T, dim=1)
+
+        for i in range(num_classifiers):
+            student_logits = logits_list[i]
+            # PyTorch CE Loss automatically handles probability distributions
+            ce = self.ce_loss(student_logits, soft_targets)
+
+            if i < num_classifiers - 1:
+                student_features = bottlenecks_list[i]
+                student_log_probs = F.log_softmax(student_logits / self.T, dim=1)
+                kl = F.kl_div(student_log_probs, teacher_probs, reduction='batchmean') * (self.T ** 2)
+                hint = self.mse_loss(student_features, teacher_features)
+
+                loss_i = (1 - self.alpha) * ce + self.alpha * kl + self.lambda_weight * hint
+            else:
+                loss_i = ce
+
+            total_loss += loss_i
+
+        return total_loss

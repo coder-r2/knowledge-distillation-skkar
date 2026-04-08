@@ -7,8 +7,8 @@ import random
 import numpy as np
 
 # Import custom modules
-from datasets import get_medmnist_dataloaders
-from models import BaselineResNet18, SelfDistillationResNet18
+from datasets import get_ham10000_dataloaders
+from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k
 from losses import SelfDistillationLoss
 from train import (
     ECEMetric, 
@@ -37,8 +37,8 @@ def main():
     # Ensure save directory exists
     save_dir = 'Hypothesis 3/saved_models'
     os.makedirs(save_dir, exist_ok=True)
-    sd_save_path = os.path.join(save_dir, 'resnet18_bloodmnist_self_distilled_best.pth')
-    baseline_save_path = os.path.join(save_dir, 'resnet18_bloodmnist_baseline_best.pth')
+    sd_save_path = os.path.join(save_dir, 'resnet18_ham10000_self_distilled_best.pth')
+    baseline_save_path = os.path.join(save_dir, 'resnet18_ham10000_baseline_best.pth')
 
     # --- Hyperparameters ---
     epochs = 250
@@ -48,18 +48,21 @@ def main():
 
     # --- Data Loading ---
     print("Loading datasets...")
-    train_loader, val_loader, test_loader, in_channels, num_classes = get_medmnist_dataloaders('bloodmnist', batch_size)
+    # Updated to handle running from the workspace root
+    data_dir = 'Hypothesis 3/data/HAM10000' 
+    train_loader, val_loader, test_loader, in_channels, num_classes = get_ham10000_dataloaders(data_dir, batch_size)
 
     # --- Instantiation ---
     ece_metric = ECEMetric(n_bins=15)
 
     # SD Model
-    sd_model = SelfDistillationResNet18(num_classes=num_classes, in_channels=in_channels).to(device)
-    sd_criterion = SelfDistillationLoss()
+    sd_model = SelfDistillationResNet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
+    # Applied your Optuna hyperparameters here
+    sd_criterion = SelfDistillationLoss(alpha=0.575, lambda_weight=0.0084, temperature=4.447)
     sd_optimizer = optim.Adam(sd_model.parameters(), lr=learning_rate)
 
     # Baseline Model
-    baseline_model = BaselineResNet18(num_classes=num_classes, in_channels=in_channels).to(device)
+    baseline_model = Baseline_Resnet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
     baseline_criterion = nn.CrossEntropyLoss()
     baseline_optimizer = optim.Adam(baseline_model.parameters(), lr=learning_rate)
 
@@ -76,17 +79,16 @@ def main():
     # 1. TRAIN SELF-DISTILLATION MODEL
     # ==========================================
     print("\n--- Starting SD Model Training ---")
-    best_sd_val_loss = float('inf')
+    best_sd_val_ece = float('inf') # Changed to track ECE instead of Loss
     sd_patience_counter = 0
 
     for epoch in range(1, epochs + 1):
         train_loss = train_sd_epoch(sd_model, train_loader, sd_optimizer, sd_criterion, device, epoch, epochs)
         
-        # Pass criterion to compute val loss
         val_results = evaluate_sd(sd_model, val_loader, device, ece_metric, criterion=nn.CrossEntropyLoss(), num_exits=4)
         
-        # Deepest exit is index 3 (Exit 4)
         deepest_val_loss = val_results[3]['loss']
+        deepest_val_ece = val_results[3]['ece'] # Track the ECE for early stopping
 
         sd_history['epochs'].append(epoch)
         sd_history['train_loss'].append(train_loss)
@@ -96,18 +98,18 @@ def main():
             sd_history['ece'][i].append(res['ece'])
             sd_history['acc'][i].append(res['acc'])
 
-        # Early Stopping Logic
-        if deepest_val_loss < best_sd_val_loss:
-            best_sd_val_loss = deepest_val_loss
+        # Early Stopping Logic (Now based on ECE)
+        if deepest_val_ece < best_sd_val_ece:
+            best_sd_val_ece = deepest_val_ece
             sd_patience_counter = 0
             torch.save(sd_model.state_dict(), sd_save_path)
-            is_best = " (New Best!)"
+            is_best = " (New Best ECE!)"
         else:
             sd_patience_counter += 1
             is_best = ""
 
         if epoch % 5 == 0 or is_best:    
-            print(f"Epoch [{epoch}/{epochs}] SD Train Loss: {train_loss:.4f} | Exit 4 Val Loss: {deepest_val_loss:.4f}{is_best}")
+            print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f} | Exit 4 Val ECE: {deepest_val_ece:.2f}%{is_best}")
 
         if sd_patience_counter >= patience:
             print(f"\nEarly stopping triggered for SD model at epoch {epoch}")
@@ -117,32 +119,34 @@ def main():
     # 2. TRAIN BASELINE MODEL
     # ==========================================
     print("\n--- Starting Baseline ResNet-18 Training ---")
-    best_baseline_val_loss = float('inf')
+    best_baseline_val_ece = float('inf') # Changed to track ECE instead of Loss
     baseline_patience_counter = 0
 
     for epoch in range(1, epochs + 1):
         train_loss = train_standard_epoch(baseline_model, train_loader, baseline_optimizer, baseline_criterion, device, epoch, epochs)
         val_results = evaluate_standard(baseline_model, val_loader, device, ece_metric, criterion=baseline_criterion)
+        
         val_loss = val_results['loss']
+        val_ece = val_results['ece']
 
         baseline_history['epochs'].append(epoch)
         baseline_history['train_loss'].append(train_loss)
         baseline_history['val_loss'].append(val_loss)
-        baseline_history['ece'].append(val_results['ece'])
+        baseline_history['ece'].append(val_ece)
         baseline_history['acc'].append(val_results['acc'])
 
-        # Early Stopping Logic
-        if val_loss < best_baseline_val_loss:
-            best_baseline_val_loss = val_loss
+        # Early Stopping Logic (Now based on ECE)
+        if val_ece < best_baseline_val_ece:
+            best_baseline_val_ece = val_ece
             baseline_patience_counter = 0
             torch.save(baseline_model.state_dict(), baseline_save_path)
-            is_best = " (New Best!)"
+            is_best = " (New Best ECE!)"
         else:
             baseline_patience_counter += 1
             is_best = ""
 
         if epoch % 5 == 0 or is_best:
-            print(f"Epoch [{epoch}/{epochs}] Baseline Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}{is_best}")
+            print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f} | Val ECE: {val_ece:.2f}%{is_best}")
 
         if baseline_patience_counter >= patience:
             print(f"\nEarly stopping triggered for Baseline model at epoch {epoch}")
@@ -165,7 +169,7 @@ def main():
     print(f"Baseline - Test Acc: {baseline_results['acc']:.2f}% | Test ECE: {baseline_results['ece']:.2f}%")
 
     print("\nMeasuring Inference Throughput...")
-    dummy_batch = torch.randn(128, in_channels, 32, 32).to(device)
+    dummy_batch = torch.randn(128, in_channels, 224, 224).to(device)
     
     for exit_idx in range(4):
         time_ms = measure_sd_inference(sd_model, dummy_batch, exit_idx)
@@ -206,7 +210,7 @@ def main():
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('Hypothesis 3/results/resnet18_bloodmnist_convergence.png')
+    plt.savefig('Hypothesis 3/results/resnet18_ham10000_convergence.png')
     plt.show()
 
     # ==========================================
@@ -216,12 +220,12 @@ def main():
     models_to_plot = [
         {
             'path': baseline_save_path,
-            'class': BaselineResNet18,
+            'class': Baseline_Resnet18_H10k,
             'name': 'ResNet-18 Baseline (Best)'
         },
         {
             'path': sd_save_path,
-            'class': SelfDistillationResNet18,
+            'class': SelfDistillationResNet18_H10k,
             'name': 'ResNet-18 Self-Distilled (Best)'
         }
     ]

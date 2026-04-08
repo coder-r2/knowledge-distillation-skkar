@@ -1,13 +1,16 @@
+import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Import the dataloader function
-from datasets import get_medmnist_dataloaders
+# Import the NEW HAM10000 dataloader function
+from datasets import get_ham10000_dataloaders
+# Import the models so they can be instantiated directly here
+from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k
 
 def plot_calibration_curves(models_to_plot, num_bins=15):
     """
-    Plots calibration curves for a list of models side-by-side on the BloodMNIST test set.
+    Plots calibration curves for a list of models side-by-side on the HAM10000 test set.
 
     Args:
         models_to_plot (list of dicts): A list of dictionaries, where each dict contains:
@@ -21,7 +24,9 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
     print(f"Using device for calibration evaluation: {device}")
 
     # --- Load Data ---
-    _, _, test_loader, n_channels, n_classes = get_medmnist_dataloaders('bloodmnist', batch_size=128)
+    # Updated to use HAM10000 dataloader
+    data_dir = 'Hypothesis 3/data/HAM10000'
+    _, _, test_loader, n_channels, n_classes = get_ham10000_dataloaders(data_dir, batch_size=128)
     print("Test data loaded for calibration curves.")
 
     num_models = len(models_to_plot)
@@ -130,5 +135,33 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
         ax.grid(True, linestyle='--', alpha=0.6)
 
     fig.tight_layout()
-    plt.savefig(f'Hypothesis 3/results/{model_name}_calibration_curves.png')
+    # Updated save path name
+    os.makedirs('Hypothesis 3/results', exist_ok=True)
+    save_path = f'Hypothesis 3/results/{model_name.replace(" ", "_")}_calibration_curves.png'
+    plt.savefig(save_path)
+    print(f"Saved calibration curves to {save_path}")
     plt.show()
+
+# ==========================================
+# STANDALONE EXECUTION BLOCK
+# ==========================================
+if __name__ == "__main__":
+    print("\n--- Starting Standalone Calibration Evaluation ---")
+    
+    save_dir = 'Hypothesis 3/saved_models'
+    
+    # Define the exact models and paths you want to plot
+    models_to_evaluate = [
+        {
+            'path': os.path.join(save_dir, 'resnet18_ham10000_baseline_best.pth'),
+            'class': Baseline_Resnet18_H10k,
+            'name': 'ResNet-18 Baseline (Best)'
+        },
+        {
+            'path': os.path.join(save_dir, 'resnet18_ham10000_self_distilled_best.pth'),
+            'class': SelfDistillationResNet18_H10k,
+            'name': 'ResNet-18 Self-Distilled (Best)'
+        }
+    ]
+    
+    plot_calibration_curves(models_to_evaluate)
