@@ -3,54 +3,46 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SelfDistillationLoss(nn.Module):
-    def __init__(self, alpha=0.5, lambda_weight=0.01, temperature=3.0):
+    def __init__(self, alpha=0.357, lambda_weight=0.001, temperature=3.0):
         super().__init__()
         self.alpha = alpha
         self.lambda_weight = lambda_weight
-        self.T = temperature
+        self.temperature = temperature
         self.ce_loss = nn.CrossEntropyLoss()
-        self.mse_loss = nn.MSELoss()
 
-    def forward(self, logits_list, bottlenecks_list, targets):
-        # targets shape might be [batch, 1] for medmnist, squeeze it
-        targets = targets.squeeze().long()
-
-        total_loss = 0
-        num_classifiers = len(logits_list)
-
-        # The deepest classifier acts as the teacher
+    def forward(self, logits_list, features_list, targets):
+        # The deepest exit is the Teacher (last item in the lists)
         teacher_logits = logits_list[-1]
-        teacher_features = bottlenecks_list[-1]
-
-        # Softened teacher probabilities for KL Divergence
-        with torch.no_grad():
-            teacher_probs = F.softmax(teacher_logits / self.T, dim=1)
-
-        for i in range(num_classifiers):
+        teacher_features = features_list[-1]
+        
+        total_loss = 0.0
+        
+        # Loop through all exits
+        for i in range(len(logits_list)):
             student_logits = logits_list[i]
+            student_features = features_list[i]
+            
+            # 1. Standard Cross-Entropy Loss (against hard true labels)
+            loss_ce = self.ce_loss(student_logits, targets)
+            
+            # If it's the Teacher (Exit 4), it ONLY gets CE loss. 
+            if i == len(logits_list) - 1:
+                total_loss += loss_ce
+                continue
+            # 2. KL Divergence (Soft Targets)
+            loss_kl = nn.KLDivLoss(reduction='batchmean')(
+                F.log_softmax(student_logits / self.temperature, dim=1),
+                F.softmax(teacher_logits.detach() / self.temperature, dim=1) # <-- Detach here
+            ) * (self.temperature ** 2)
+            
+            # 3. Hint Loss (Feature Mimicry)
+            loss_hint = F.mse_loss(student_features, teacher_features.detach()) # <-- Detach here
+            
+            # Combine losses for this student exit
+            exit_loss = loss_ce + (self.alpha * loss_kl) + (self.lambda_weight * loss_hint)
+            total_loss += exit_loss
 
-            # 1. Cross Entropy Loss (for all classifiers, including deepest)
-            ce = self.ce_loss(student_logits, targets)
-
-            # 2 & 3. KL Divergence & L2 Hint Loss (only for shallow classifiers)
-            if i < num_classifiers - 1:
-                student_features = bottlenecks_list[i]
-
-                # KL Divergence
-                student_log_probs = F.log_softmax(student_logits / self.T, dim=1)
-                kl = F.kl_div(student_log_probs, teacher_probs, reduction='batchmean') * (self.T ** 2)
-
-                # L2 Hint Loss
-                hint = self.mse_loss(student_features, teacher_features)
-
-                loss_i = (1 - self.alpha) * ce + self.alpha * kl + self.lambda_weight * hint
-            else:
-                # Deepest classifier only gets supervised by labels
-                loss_i = ce
-
-            total_loss += loss_i
-
-        return total_loss
+        return total_loss / len(logits_list)
 
 class DECELoss(nn.Module):
     """
@@ -173,7 +165,7 @@ class CalibrationAwareSelfDistillationLoss(nn.Module):
 
             total_loss += loss_i
 
-        return total_loss
+        return total_loss / num_classifiers
     
 class LearnableLabelSmoothing(nn.Module):
     """Equation from Section 3.3: Learns a non-uniform label smoothing distribution."""
@@ -265,4 +257,4 @@ class SoftSelfDistillationLoss(nn.Module):
 
             total_loss += loss_i
 
-        return total_loss
+        return total_loss / num_classifiers

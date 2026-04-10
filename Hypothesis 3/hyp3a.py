@@ -44,6 +44,11 @@ def main():
     learning_rate = 0.001
     batch_size = 64 # Lowered to 64 as X-Ray images can be memory intensive
 
+    # Define your targets and the warmup threshold
+    WARMUP_EPOCHS = 20
+    TARGET_ALPHA = 0.357       # The alpha you want to use after warmup
+    TARGET_LAMBDA = 0.001      # The safe lambda_weight you found earlie
+
     # --- Data Loading ---
     print("Loading datasets...")
     # Point directly to the downloaded chest_xray folder
@@ -54,7 +59,7 @@ def main():
 
     # Models (Re-using H10k classes as they represent 224x224 architecture)
     sd_model = SelfDistillationResNet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
-    sd_criterion = SelfDistillationLoss(alpha=0.357, lambda_weight=0.01, temperature=3.013)
+    sd_criterion = SelfDistillationLoss(alpha=0, lambda_weight=0, temperature=3.013)
     sd_optimizer = optim.Adam(sd_model.parameters(), lr=learning_rate)
 
     baseline_model = Baseline_Resnet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
@@ -74,6 +79,11 @@ def main():
     sd_patience_counter = 0
 
     for epoch in range(1, epochs + 1):
+        if epoch == WARMUP_EPOCHS + 1:
+            print(f"\n[INFO] Epoch {epoch}: Warm-up complete. Activating KL Divergence and Hint Loss!")
+            sd_criterion.alpha = TARGET_ALPHA
+            sd_criterion.lambda_weight = TARGET_LAMBDA
+
         train_loss = train_sd_epoch(sd_model, train_loader, sd_optimizer, sd_criterion, device, epoch, epochs)
         val_results = evaluate_sd(sd_model, val_loader, device, ece_metric, criterion=nn.CrossEntropyLoss(), num_exits=4)
         
