@@ -1,54 +1,41 @@
 import os
 import torch
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 
-# Import the NEW Chest X-Ray dataloader function
-from datasets import get_chestxray_dataloaders
-from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k
+# Adjust imports based on your dataset (HAM10000 or Chest X-Ray)
+from datasets import get_medmnist_dataloaders, get_chestxray_dataloaders
+from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k, BaselineResNet50, SelfDistillationResNet50
 
-def plot_calibration_curves(models_to_plot, num_bins=15):
+def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn, num_bins=50):
     """
-    Plots calibration curves for a list of models side-by-side on the test set.
-
-    Args:
-        models_to_plot (list of dicts): A list of dictionaries, where each dict contains:
-                                          'path': Path to the saved model state dictionary.
-                                          'class': The model class to instantiate.
-                                          'name': A name for the plot title.
-        num_bins (int): The number of bins to use for the calibration curve.
+    Plots class-wise (One-vs-All) calibration curves, overlaying different models 
+    on the same plot for direct comparison.
     """
-    # --- Device Configuration ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device for calibration evaluation: {device}")
+    print(f"Using device: {device}")
 
-    # --- Load Data ---
-    # Updated to use Chest X-Ray dataloader
-    data_dir = 'Hypothesis 3/data/chest_xray/chest_xray'
-    _, _, test_loader, n_channels, n_classes = get_chestxray_dataloaders(data_dir, batch_size=64)
-    print("Test data loaded for calibration curves.")
+    print(f"Loading dataloader from {data_dir}...")
+    _, _, test_loader, n_channels, n_classes = get_dataloader_fn(data_dir, batch_size=128)
+    print(f"Test data loaded. Detected {n_classes} classes.")
 
-    num_models = len(models_to_plot)
-    fig, axes = plt.subplots(1, num_models, figsize=(8 * num_models, 6), sharey=True)
-    if num_models == 1:
-        axes = [axes] # Make it iterable
+    # --- 1. Gather Predictions for All Models ---
+    model_results = []
 
-    for i, model_info in enumerate(models_to_plot):
+    for model_info in models_to_plot:
         model_path = model_info['path']
         model_class = model_info['class']
         model_name = model_info['name']
-        ax = axes[i]
 
-        # --- Load Model dynamically ---
+        print(f"\nEvaluating {model_name}...")
         model = model_class(num_classes=n_classes, in_channels=n_channels).to(device)
 
         try:
             model.load_state_dict(torch.load(model_path, map_location=device))
-            print(f"Model '{model_name}' loaded successfully from {model_path}")
         except Exception as e:
-            print(f"Error loading model '{model_name}': {e}")
             try:
-                # Handle potential DataParallel wrapper issues
+                # Handle DataParallel wrapper
                 state_dict = torch.load(model_path, map_location=device)
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
@@ -56,110 +43,138 @@ def plot_calibration_curves(models_to_plot, num_bins=15):
                     name = k[7:] if k.startswith('module.') else k
                     new_state_dict[name] = v
                 model.load_state_dict(new_state_dict)
-                print(f"Model '{model_name}' loaded successfully after removing 'module.' prefix.")
             except Exception as e_inner:
-                print(f"Failed to load model '{model_name}' even after attempting to fix wrapper: {e_inner}")
-                continue # Skip to the next model
+                print(f"Failed to load {model_name}: {e_inner}")
+                continue 
 
         model.eval()
-
-        # --- Get Predictions and Confidences ---
-        all_confidences = []
-        all_corrects = []
+        all_probabilities = []
+        all_labels = []
 
         with torch.no_grad():
             for images, labels in test_loader:
                 images, labels = images.to(device), labels.squeeze().to(device)
-
                 outputs = model(images)
                 
-                # Check output type to handle both Baseline (Tensor) and SD Models (Tuple of Lists)
                 if isinstance(outputs, tuple) and len(outputs) == 2:
                     logits, _ = outputs
                     final_logits = logits[-1] # Deepest exit
                 elif isinstance(outputs, torch.Tensor):
                     final_logits = outputs
                 else:
-                    raise TypeError(f"Unexpected model output type for '{model_name}': {type(outputs)}")
+                    raise TypeError(f"Unexpected output type: {type(outputs)}")
 
                 probabilities = torch.softmax(final_logits, dim=1)
-                confidences, predictions = torch.max(probabilities, 1)
-                
-                corrects = (predictions == labels).cpu().numpy()
+                all_probabilities.extend(probabilities.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
 
-                all_confidences.extend(confidences.cpu().numpy())
-                all_corrects.extend(corrects)
+        model_results.append({
+            'name': model_name,
+            'probs': np.array(all_probabilities), # Shape: (N, C)
+            'labels': np.array(all_labels)        # Shape: (N,)
+        })
+        print(f"Finished evaluation for {model_name}.")
 
-        all_confidences = np.array(all_confidences)
-        all_corrects = np.array(all_corrects)
+    # --- 2. Dynamic Subplot Grid ---
+    cols = min(n_classes, 3)
+    rows = math.ceil(n_classes / cols)
+    fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows), sharey=True, sharex=True)
+    fig.suptitle('Baseline vs. Self-Distilled: Class-wise Calibration', fontsize=18, y=1.02)
+    
+    # Handle the case where n_classes is 1 (axes isn't an array)
+    if n_classes == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    bin_boundaries = np.linspace(0, 1, num_bins + 1)
+    bin_lowers = bin_boundaries[:-1]
+    bin_uppers = bin_boundaries[1:]
+    
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'] # Standard distinct colors
+
+    # --- 3. Compute and Plot Overlaid Curves ---
+    for c in range(n_classes):
+        ax = axes[c]
         
-        # --- Binning ---
-        bin_boundaries = np.linspace(0, 1, num_bins + 1)
-        bin_lowers = bin_boundaries[:-1]
-        bin_uppers = bin_boundaries[1:]
+        for idx, res in enumerate(model_results):
+            class_probs = res['probs'][:, c]
+            class_targets = (res['labels'] == c).astype(int)
 
-        bin_fraction_of_positives = np.zeros(num_bins)
-        bin_avg_confidence = np.zeros(num_bins)
-        bin_counts = np.zeros(num_bins)
+            bin_fraction_of_positives = np.zeros(num_bins)
+            bin_avg_confidence = np.zeros(num_bins)
+            bin_counts = np.zeros(num_bins)
 
-        for j in range(num_bins):
-            in_bin = (all_confidences > bin_lowers[j]) & (all_confidences <= bin_uppers[j])
-            bin_counts[j] = np.sum(in_bin)
+            for j in range(num_bins):
+                in_bin = (class_probs > bin_lowers[j]) & (class_probs <= bin_uppers[j])
+                bin_counts[j] = np.sum(in_bin)
 
-            if bin_counts[j] > 0:
-                bin_fraction_of_positives[j] = np.mean(all_corrects[in_bin])
-                bin_avg_confidence[j] = np.mean(all_confidences[in_bin])
-        
-        # --- ECE Calculation ---
-        ece = np.sum((bin_counts / len(all_corrects)) * np.abs(bin_fraction_of_positives - bin_avg_confidence))
-        print(f"Expected Calibration Error (ECE) for '{model_name}': {ece:.4f}")
+                if bin_counts[j] > 0:
+                    bin_fraction_of_positives[j] = np.mean(class_targets[in_bin])
+                    bin_avg_confidence[j] = np.mean(class_probs[in_bin])
+            
+            # ECE Calculation
+            ece = np.sum((bin_counts / len(class_targets)) * np.abs(bin_fraction_of_positives - bin_avg_confidence))
+            
+            # Plot Model Curve
+            non_empty_bins = bin_counts > 0
+            ax.plot(bin_avg_confidence[non_empty_bins], bin_fraction_of_positives[non_empty_bins], 
+                    marker='o', linestyle='', color=colors[idx % len(colors)], 
+                    label=f'{res["name"]} (ECE: {ece:.4f})')
 
-        # --- Plotting ---
-        non_empty_bins = bin_counts > 0
-        
-        ax.plot(bin_avg_confidence[non_empty_bins], bin_fraction_of_positives[non_empty_bins], 
-                'b-o', label='Calibration Curve')
+        # Add Ideal Line
+        ax.plot([0, 1], [0, 1], 'k--', label='Ideal Calibration', alpha=0.7)
 
-        # Ideal calibration line
-        ax.plot([0, 1], [0, 1], 'k--', label='Ideal Calibration')
-
-        ax.set_xlabel('Mean Predicted Probability (Confidence)')
-        if i == 0:
-            ax.set_ylabel('Fraction of Positives (Accuracy)')
-        
-        ax.set_title(f'Calibration Curve for {model_name}\nECE: {ece:.4f}')
-        ax.legend()
+        # Subplot Formatting
+        ax.set_title(f'Class {c}')
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.grid(True, linestyle='--', alpha=0.6)
 
+        if c % cols == 0:
+            ax.set_ylabel('Fraction of Positives')
+        if c >= (rows - 1) * cols:
+            ax.set_xlabel('Mean Predicted Probability')
+        
+        ax.legend(fontsize=9)
+
+    # Hide unused subplots
+    for extra_ax in axes[n_classes:]:
+        extra_ax.set_visible(False)
+
     fig.tight_layout()
     os.makedirs('Hypothesis 3/results', exist_ok=True)
-    save_path = f'Hypothesis 3/results/{model_name.replace(" ", "_")}_calibration_curves.png'
-    plt.savefig(save_path)
-    print(f"Saved calibration curves to {save_path}")
+    save_path = 'Hypothesis 3/results/model_comparison_classwise_calibration.png'
+    plt.savefig(save_path, bbox_inches='tight', dpi=300)
+    print(f"\nSaved comparison figure to {save_path}")
     plt.show()
 
 # ==========================================
 # STANDALONE EXECUTION BLOCK
 # ==========================================
 if __name__ == "__main__":
-    print("\n--- Starting Standalone Calibration Evaluation ---")
+    print("\n--- Starting Head-to-Head Calibration Evaluation ---")
     
     save_dir = 'Hypothesis 3/saved_models'
+    data_directory = 'Hypothesis 3/data/chest_xray' # Adjust if using HAM10000
+    dataloader_function = get_chestxray_dataloaders
     
-    # Evaluating the Chest X-Ray models
     models_to_evaluate = [
         {
             'path': os.path.join(save_dir, 'resnet18_chestxray_baseline_best.pth'),
             'class': Baseline_Resnet18_H10k,
-            'name': 'ResNet-18 Baseline (Best)'
+
+            'name': 'Baseline'
         },
         {
             'path': os.path.join(save_dir, 'resnet18_chestxray_self_distilled_best.pth'),
             'class': SelfDistillationResNet18_H10k,
-            'name': 'ResNet-18 Self-Distilled (Best)'
+            'name': 'Self-Distilled'
         }
     ]
     
-    plot_calibration_curves(models_to_evaluate)
+    plot_model_comparison_classwise(
+        models_to_plot=models_to_evaluate, 
+        data_dir=data_directory, 
+        get_dataloader_fn=dataloader_function
+    )

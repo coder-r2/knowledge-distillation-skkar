@@ -7,8 +7,8 @@ import random
 import numpy as np
 
 # Import custom modules
-from datasets import get_chestxray_dataloaders
-from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k
+from datasets import get_chestxray_dataloaders, get_medmnist_dataloaders
+from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k, BaselineResNet50, SelfDistillationResNet50
 from losses import SelfDistillationLoss
 from train import (
     ECEMetric, 
@@ -36,8 +36,8 @@ def main():
     save_dir = 'Hypothesis 3/saved_models'
     os.makedirs(save_dir, exist_ok=True)
     # Updated Save Paths
-    sd_save_path = os.path.join(save_dir, 'resnet18_chestxray_self_distilled_best.pth')
-    baseline_save_path = os.path.join(save_dir, 'resnet18_chestxray_baseline_best.pth')
+    sd_save_path = os.path.join(save_dir, 'resnet50_bloodmnist_self_distilled_best.pth')
+    baseline_save_path = os.path.join(save_dir, 'resnet50_bloodmnist_baseline_best.pth')
 
     epochs = 250
     patience = 30
@@ -47,104 +47,105 @@ def main():
     # Define your targets and the warmup threshold
     WARMUP_EPOCHS = 20
     TARGET_ALPHA = 0.357       # The alpha you want to use after warmup
-    TARGET_LAMBDA = 0.001      # The safe lambda_weight you found earlie
+    TARGET_LAMBDA = 0.005      # The safe lambda_weight you found earlie
 
     # --- Data Loading ---
     print("Loading datasets...")
     # Point directly to the downloaded chest_xray folder
-    data_dir = 'Hypothesis 3/data/chest_xray/chest_xray' 
-    train_loader, val_loader, test_loader, in_channels, num_classes = get_chestxray_dataloaders(data_dir, batch_size)
+    # data_dir = 'Hypothesis 3/data/chest_xray/chest_xray' 
+    # load bloodmnist dataloaders instead
+    train_loader, val_loader, test_loader, in_channels, num_classes = get_medmnist_dataloaders(data_flag='bloodmnist', batch_size=batch_size)
 
     ece_metric = ECEMetric(n_bins=15)
 
     # Models (Re-using H10k classes as they represent 224x224 architecture)
-    sd_model = SelfDistillationResNet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
-    sd_criterion = SelfDistillationLoss(alpha=0, lambda_weight=0, temperature=3.013)
-    sd_optimizer = optim.Adam(sd_model.parameters(), lr=learning_rate)
+    sd_model = SelfDistillationResNet50(num_classes=num_classes, in_channels=in_channels).to(device)
+    # sd_criterion = SelfDistillationLoss(alpha=TARGET_ALPHA, lambda_weight=TARGET_LAMBDA, temperature=3.013)
+    # sd_optimizer = optim.Adam(sd_model.parameters(), lr=learning_rate)
 
-    baseline_model = Baseline_Resnet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
-    baseline_criterion = nn.CrossEntropyLoss()
-    baseline_optimizer = optim.Adam(baseline_model.parameters(), lr=learning_rate)
+    baseline_model = BaselineResNet50(num_classes=num_classes, in_channels=in_channels).to(device)
+    # baseline_criterion = nn.CrossEntropyLoss()
+    # baseline_optimizer = optim.Adam(baseline_model.parameters(), lr=learning_rate)
 
-    sd_history = {
-        'epochs': [], 'train_loss': [], 'val_loss': [],
-        'ece': [[] for _ in range(4)], 'acc': [[] for _ in range(4)]
-    }
-    baseline_history = {
-        'epochs': [], 'train_loss': [], 'val_loss': [], 'ece': [], 'acc': []
-    }
+    # sd_history = {
+    #     'epochs': [], 'train_loss': [], 'val_loss': [],
+    #     'ece': [[] for _ in range(4)], 'acc': [[] for _ in range(4)]
+    # }
+    # baseline_history = {
+    #     'epochs': [], 'train_loss': [], 'val_loss': [], 'ece': [], 'acc': []
+    # }
 
-    print("\n--- Starting SD Model Training ---")
-    best_sd_val_ece = float('inf') 
-    sd_patience_counter = 0
+    # print("\n--- Starting SD Model Training ---")
+    # best_sd_val_ece = float('inf') 
+    # sd_patience_counter = 0
 
-    for epoch in range(1, epochs + 1):
-        if epoch == WARMUP_EPOCHS + 1:
-            print(f"\n[INFO] Epoch {epoch}: Warm-up complete. Activating KL Divergence and Hint Loss!")
-            sd_criterion.alpha = TARGET_ALPHA
-            sd_criterion.lambda_weight = TARGET_LAMBDA
+    # for epoch in range(1, epochs + 1):
+    #     # if epoch == WARMUP_EPOCHS + 1:
+    #     #     print(f"\n[INFO] Epoch {epoch}: Warm-up complete. Activating KL Divergence and Hint Loss!")
+    #     #     sd_criterion.alpha = TARGET_ALPHA
+    #     #     sd_criterion.lambda_weight = TARGET_LAMBDA
 
-        train_loss = train_sd_epoch(sd_model, train_loader, sd_optimizer, sd_criterion, device, epoch, epochs)
-        val_results = evaluate_sd(sd_model, val_loader, device, ece_metric, criterion=nn.CrossEntropyLoss(), num_exits=4)
+    #     train_loss = train_sd_epoch(sd_model, train_loader, sd_optimizer, sd_criterion, device, epoch, epochs)
+    #     val_results = evaluate_sd(sd_model, val_loader, device, ece_metric, criterion=nn.CrossEntropyLoss(), num_exits=4)
         
-        deepest_val_loss = val_results[3]['loss']
-        deepest_val_ece = val_results[3]['ece']
+    #     deepest_val_loss = val_results[3]['loss']
+    #     deepest_val_ece = val_results[3]['ece']
 
-        sd_history['epochs'].append(epoch)
-        sd_history['train_loss'].append(train_loss)
-        sd_history['val_loss'].append(deepest_val_loss)
-        for i, res in enumerate(val_results):
-            sd_history['ece'][i].append(res['ece'])
-            sd_history['acc'][i].append(res['acc'])
+    #     sd_history['epochs'].append(epoch)
+    #     sd_history['train_loss'].append(train_loss)
+    #     sd_history['val_loss'].append(deepest_val_loss)
+    #     for i, res in enumerate(val_results):
+    #         sd_history['ece'][i].append(res['ece'])
+    #         sd_history['acc'][i].append(res['acc'])
 
-        if deepest_val_ece < best_sd_val_ece:
-            best_sd_val_ece = deepest_val_ece
-            sd_patience_counter = 0
-            torch.save(sd_model.state_dict(), sd_save_path)
-            is_best = " (New Best ECE!)"
-        else:
-            sd_patience_counter += 1
-            is_best = ""
+    #     if deepest_val_ece < best_sd_val_ece:
+    #         best_sd_val_ece = deepest_val_ece
+    #         sd_patience_counter = 0
+    #         torch.save(sd_model.state_dict(), sd_save_path)
+    #         is_best = " (New Best ECE!)"
+    #     else:
+    #         sd_patience_counter += 1
+    #         is_best = ""
 
-        if epoch % 5 == 0 or is_best:    
-            print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f} | Exit 4 Val ECE: {deepest_val_ece:.2f}%{is_best}")
+    #     if epoch % 5 == 0 or is_best:    
+    #         print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f} | Exit 4 Val ECE: {deepest_val_ece:.2f}%{is_best}")
 
-        if sd_patience_counter >= patience:
-            print(f"\nEarly stopping triggered for SD model at epoch {epoch}")
-            break
+    #     if sd_patience_counter >= patience:
+    #         print(f"\nEarly stopping triggered for SD model at epoch {epoch}")
+    #         break
 
-    print("\n--- Starting Baseline ResNet-18 Training ---")
-    best_baseline_val_ece = float('inf') 
-    baseline_patience_counter = 0
+    # print("\n--- Starting Baseline ResNet-18 Training ---")
+    # best_baseline_val_ece = float('inf') 
+    # baseline_patience_counter = 0
 
-    for epoch in range(1, epochs + 1):
-        train_loss = train_standard_epoch(baseline_model, train_loader, baseline_optimizer, baseline_criterion, device, epoch, epochs)
-        val_results = evaluate_standard(baseline_model, val_loader, device, ece_metric, criterion=baseline_criterion)
+    # for epoch in range(1, epochs + 1):
+    #     train_loss = train_standard_epoch(baseline_model, train_loader, baseline_optimizer, baseline_criterion, device, epoch, epochs)
+    #     val_results = evaluate_standard(baseline_model, val_loader, device, ece_metric, criterion=baseline_criterion)
         
-        val_loss = val_results['loss']
-        val_ece = val_results['ece']
+    #     val_loss = val_results['loss']
+    #     val_ece = val_results['ece']
 
-        baseline_history['epochs'].append(epoch)
-        baseline_history['train_loss'].append(train_loss)
-        baseline_history['val_loss'].append(val_loss)
-        baseline_history['ece'].append(val_ece)
-        baseline_history['acc'].append(val_results['acc'])
+    #     baseline_history['epochs'].append(epoch)
+    #     baseline_history['train_loss'].append(train_loss)
+    #     baseline_history['val_loss'].append(val_loss)
+    #     baseline_history['ece'].append(val_ece)
+    #     baseline_history['acc'].append(val_results['acc'])
 
-        if val_ece < best_baseline_val_ece:
-            best_baseline_val_ece = val_ece
-            baseline_patience_counter = 0
-            torch.save(baseline_model.state_dict(), baseline_save_path)
-            is_best = " (New Best ECE!)"
-        else:
-            baseline_patience_counter += 1
-            is_best = ""
+    #     if val_ece < best_baseline_val_ece:
+    #         best_baseline_val_ece = val_ece
+    #         baseline_patience_counter = 0
+    #         torch.save(baseline_model.state_dict(), baseline_save_path)
+    #         is_best = " (New Best ECE!)"
+    #     else:
+    #         baseline_patience_counter += 1
+    #         is_best = ""
 
-        if epoch % 5 == 0 or is_best:
-            print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f} | Val ECE: {val_ece:.2f}%{is_best}")
+    #     if epoch % 5 == 0 or is_best:
+    #         print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f} | Val ECE: {val_ece:.2f}%{is_best}")
 
-        if baseline_patience_counter >= patience:
-            print(f"\nEarly stopping triggered for Baseline model at epoch {epoch}")
-            break
+    #     if baseline_patience_counter >= patience:
+    #         print(f"\nEarly stopping triggered for Baseline model at epoch {epoch}")
+    #         break
 
     print("\n--- Running Final Evaluation on TEST Set ---")
     sd_model.load_state_dict(torch.load(sd_save_path, map_location=device))
@@ -159,50 +160,50 @@ def main():
     baseline_results = evaluate_standard(baseline_model, test_loader, device, ece_metric)
     print(f"Baseline - Test Acc: {baseline_results['acc']:.2f}% | Test ECE: {baseline_results['ece']:.2f}%")
 
-    os.makedirs('Hypothesis 3/results', exist_ok=True)
-    plt.figure(figsize=(15, 6))
-    plt.suptitle('Performance Comparison: Self-Distillation vs. Baseline (Chest X-Ray)', fontsize=16)
+    # os.makedirs('Hypothesis 3/results', exist_ok=True)
+    # plt.figure(figsize=(15, 6))
+    # plt.suptitle('Performance Comparison: Self-Distillation vs. Baseline (Chest X-Ray)', fontsize=16)
 
-    plt.subplot(1, 2, 1)
-    plt.plot(sd_history['epochs'], sd_history['train_loss'], label='SD Train Loss', color='blue', alpha=0.6)
-    plt.plot(sd_history['epochs'], sd_history['val_loss'], label='SD Val Loss (Exit 4)', color='darkblue', linewidth=2)
-    plt.plot(baseline_history['epochs'], baseline_history['train_loss'], label='Base Train Loss', color='red', alpha=0.6, linestyle='--')
-    plt.plot(baseline_history['epochs'], baseline_history['val_loss'], label='Base Val Loss', color='darkred', linewidth=2, linestyle='--')
-    plt.title('Training & Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    # plt.subplot(1, 2, 1)
+    # plt.plot(sd_history['epochs'], sd_history['train_loss'], label='SD Train Loss', color='blue', alpha=0.6)
+    # plt.plot(sd_history['epochs'], sd_history['val_loss'], label='SD Val Loss (Exit 4)', color='darkblue', linewidth=2)
+    # plt.plot(baseline_history['epochs'], baseline_history['train_loss'], label='Base Train Loss', color='red', alpha=0.6, linestyle='--')
+    # plt.plot(baseline_history['epochs'], baseline_history['val_loss'], label='Base Val Loss', color='darkred', linewidth=2, linestyle='--')
+    # plt.title('Training & Validation Loss')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Loss')
+    # plt.legend()
+    # plt.grid(True, alpha=0.3)
 
-    plt.subplot(1, 2, 2)
-    colors = ['#c6e2ff', '#7eb6ff', '#2171ed', '#00008b']
-    for i in range(4):
-        plt.plot(sd_history['epochs'], sd_history['ece'][i], label=f'SD Exit {i+1}', color=colors[i])
-    plt.plot(baseline_history['epochs'], baseline_history['ece'], label='Baseline', color='red', linewidth=2, linestyle='--')
-    plt.title('Validation ECE')
-    plt.xlabel('Epoch')
-    plt.ylabel('ECE (%)')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    # plt.subplot(1, 2, 2)
+    # colors = ['#c6e2ff', '#7eb6ff', '#2171ed', '#00008b']
+    # for i in range(4):
+    #     plt.plot(sd_history['epochs'], sd_history['ece'][i], label=f'SD Exit {i+1}', color=colors[i])
+    # plt.plot(baseline_history['epochs'], baseline_history['ece'], label='Baseline', color='red', linewidth=2, linestyle='--')
+    # plt.title('Validation ECE')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('ECE (%)')
+    # plt.legend()
+    # plt.grid(True, alpha=0.3)
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('Hypothesis 3/results/resnet18_chestxray_convergence.png')
-    plt.show()
+    # plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    # plt.savefig('Hypothesis 3/results/resnet18_chestxray_convergence.png')
+    # plt.show()
 
-    print("\nGenerating Calibration Curves...")
-    models_to_plot = [
-        {
-            'path': baseline_save_path,
-            'class': Baseline_Resnet18_H10k,
-            'name': 'ResNet-18 Baseline (Chest X-Ray)'
-        },
-        {
-            'path': sd_save_path,
-            'class': SelfDistillationResNet18_H10k,
-            'name': 'ResNet-18 SD (Chest X-Ray)'
-        }
-    ]
-    plot_calibration_curves(models_to_plot)
+    # print("\nGenerating Calibration Curves...")
+    # models_to_plot = [
+    #     {
+    #         'path': baseline_save_path,
+    #         'class': Baseline_Resnet18_H10k,
+    #         'name': 'ResNet-18 Baseline (Chest X-Ray)'
+    #     },
+    #     {
+    #         'path': sd_save_path,
+    #         'class': SelfDistillationResNet18_H10k,
+    #         'name': 'ResNet-18 SD (Chest X-Ray)'
+    #     }
+    # ]
+    # plot_calibration_curves(models_to_plot)
 
 if __name__ == "__main__":
     main()

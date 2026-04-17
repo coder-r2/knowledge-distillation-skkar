@@ -5,7 +5,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from tqdm.auto import tqdm
 
 # Import your custom modules
-from datasets import get_chestxray_dataloaders
+from datasets import get_ham10000_dataloaders
 from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k
 
 def extract_features(model, dataloader, device, is_sd_model=False):
@@ -15,6 +15,7 @@ def extract_features(model, dataloader, device, is_sd_model=False):
     
     def get_features(name):
         def hook(model, input, output):
+            # Input[0] is the flattened vector before the FC layer
             intercepted_features[name] = input[0].detach().cpu().numpy()
         return hook
 
@@ -33,7 +34,8 @@ def extract_features(model, dataloader, device, is_sd_model=False):
     with torch.no_grad():
         for images, labels in tqdm(dataloader, desc="Extracting Features", leave=False):
             images = images.to(device)
-            labels = labels.squeeze().numpy()
+            # Ensure labels are 1D
+            labels = labels.cpu().numpy().flatten()
             
             _ = model(images) 
             
@@ -49,15 +51,19 @@ def extract_features(model, dataloader, device, is_sd_model=False):
         
     return all_features, np.array(all_labels)
 
-def compute_centroid_similarities(features, labels, num_classes=2):
+def compute_centroid_similarities(features, labels, num_classes):
     """Computes Intra-class and Inter-class cosine similarity against class centroids."""
     centroids = []
     
     # 1. Calculate the centroid (mean vector) for each class
     for c in range(num_classes):
         class_features = features[labels == c]
-        centroid = np.mean(class_features, axis=0)
-        centroids.append(centroid)
+        if len(class_features) > 0:
+            centroid = np.mean(class_features, axis=0)
+            centroids.append(centroid)
+        else:
+            # Handle empty classes if they don't appear in the test set
+            centroids.append(np.zeros(features.shape[1]))
 
     intra_sims = []
     inter_sims = []
@@ -65,9 +71,12 @@ def compute_centroid_similarities(features, labels, num_classes=2):
     # 2. Compute similarity of each test sample to the centroids
     for i in range(len(features)):
         feat = features[i].reshape(1, -1)
-        true_class = labels[i]
+        true_class = int(labels[i])
 
         for c in range(num_classes):
+            # Skip if centroid is zero (no samples for this class in training/test)
+            if np.all(centroids[c] == 0): continue
+            
             sim = cosine_similarity(feat, centroids[c].reshape(1, -1))[0, 0]
             if c == true_class:
                 intra_sims.append(sim)
@@ -81,21 +90,29 @@ def main():
     print(f"Using device: {device}")
 
     # --- Setup Data and Models ---
-    data_dir = 'Hypothesis 3/data/chest_xray/chest_xray'
-    batch_size = 64
-    print("Loading Chest X-Ray dataloaders...")
-    _, _, test_loader, in_channels, num_classes = get_chestxray_dataloaders(data_dir, batch_size)
+    data_dir = 'Hypothesis 3/data/HAM10000' # Update this path to your actual data location
+    batch_size = 128
+    
+    print("Loading HAM10000 dataloaders...")
+    # HAM10000 usually returns 3 channels (RGB) and 7 classes
+    _, _, test_loader, in_channels, num_classes = get_ham10000_dataloaders(data_dir=data_dir, batch_size=batch_size)
+    print(f"Dataset Info: {in_channels} channels, {num_classes} classes identified.")
 
     save_dir = 'Hypothesis 3/saved_models'
-    baseline_path = os.path.join(save_dir, 'resnet18_chestxray_baseline_best.pth')
-    sd_path = os.path.join(save_dir, 'resnet18_chestxray_self_distilled_best.pth')
+    baseline_path = os.path.join(save_dir, 'resnet18_ham10000_baseline_best.pth')
+    sd_path = os.path.join(save_dir, 'resnet18_ham10000_self_distilled_best.pth')
 
+    # Ensure in_channels and num_classes are passed correctly
     baseline_model = Baseline_Resnet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
     sd_model = SelfDistillationResNet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
 
     print("Loading trained weights...")
-    baseline_model.load_state_dict(torch.load(baseline_path, map_location=device))
-    sd_model.load_state_dict(torch.load(sd_path, map_location=device))
+    try:
+        baseline_model.load_state_dict(torch.load(baseline_path, map_location=device))
+        sd_model.load_state_dict(torch.load(sd_path, map_location=device))
+    except Exception as e:
+        print(f"Error loading weights: {e}")
+        return
 
     # --- Extract Features ---
     print("\n--- Processing Baseline Model ---")
@@ -105,9 +122,9 @@ def main():
     test_feat_sd, _ = extract_features(sd_model, test_loader, device, is_sd_model=True)
 
     # --- Calculate and Print Cosine Similarities ---
-    print("\n========================================================")
-    print("      Latent Space Cosine Similarity Analysis           ")
-    print("========================================================")
+    print("\n" + "="*60)
+    print("      Latent Space Cosine Similarity Analysis (HAM10000) ")
+    print("="*60)
     
     # Baseline
     base_intra, base_inter = compute_centroid_similarities(test_feat_base['baseline'], test_labels, num_classes)
@@ -123,7 +140,7 @@ def main():
         print(f"  Intra-class Similarity (Cohesion)  : {sd_intra:.4f}")
         print(f"  Inter-class Similarity (Separation): {sd_inter:.4f}\n")
         
-    print("========================================================\n")
+    print("="*60 + "\n")
 
 if __name__ == "__main__":
     main()

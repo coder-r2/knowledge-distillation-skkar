@@ -3,8 +3,8 @@ import torch
 import numpy as np
 from tqdm.auto import tqdm
 
-from datasets import get_chestxray_dataloaders
-from models import SelfDistillationResNet18_H10k
+from datasets import get_chestxray_dataloaders, get_medmnist_dataloaders, get_ham10000_dataloaders
+from models import SelfDistillationResNet18_H10k, SelfDistillationResNet50, Baseline_Resnet18_H10k, BaselineResNet50
 
 def extract_features(model, dataloader, device):
     """
@@ -72,11 +72,11 @@ def main():
 
     # --- 1. Setup Data and Model ---
     batch_size = 128
-    print("Loading ChestXRay dataloaders...")
-    _, _, test_loader, in_channels, num_classes = get_chestxray_dataloaders(data_dir='Hypothesis 3/data/chest_xray/chest_xray', batch_size=batch_size)
+    print("Loading HAM10000 dataloaders...")
+    _, _, test_loader, in_channels, num_classes = get_ham10000_dataloaders(data_dir='Hypothesis 3/data/HAM10000', batch_size=batch_size)
 
     save_dir = 'Hypothesis 3/saved_models'
-    sd_path = os.path.join(save_dir, 'resnet18_chestxray_self_distilled_best.pth')
+    sd_path = os.path.join(save_dir, 'resnet18_ham10000_self_distilled_best.pth')
 
     sd_model = SelfDistillationResNet18_H10k(num_classes=num_classes, in_channels=in_channels).to(device)
 
