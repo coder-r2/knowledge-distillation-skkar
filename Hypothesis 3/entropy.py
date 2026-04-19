@@ -3,7 +3,6 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
-# Import your existing custom modules
 from datasets import get_chestxray_dataloaders, get_medmnist_dataloaders
 from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k, BaselineResNet50, SelfDistillationResNet50
 
@@ -11,14 +10,9 @@ def calculate_mean_entropy(logits):
     """
     Calculates the mean Shannon entropy of a batch of logits.
     """
-    # Convert logits to probabilities
     probs = F.softmax(logits, dim=1)
-    
-    # Calculate entropy: -sum(p * log(p)). 
-    # We add a tiny epsilon (1e-9) to prevent log(0) which results in NaN.
     entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=1)
     
-    # Return the average entropy across the entire batch
     return entropy.mean().item()
 
 def evaluate_entropy(models_to_evaluate, test_loader, device):
@@ -34,7 +28,6 @@ def evaluate_entropy(models_to_evaluate, test_loader, device):
         n_classes = model_info['n_classes']
         n_channels = model_info['n_channels']
 
-        # Instantiate and load model
         model = model_class(num_classes=n_classes, in_channels=n_channels).to(device)
         try:
             model.load_state_dict(torch.load(model_path, map_location=device))
@@ -44,7 +37,6 @@ def evaluate_entropy(models_to_evaluate, test_loader, device):
             
         model.eval()
         
-        # Track total entropy
         if is_sd:
             total_entropy = {f'Exit {i+1}': 0.0 for i in range(4)}
         else:
@@ -53,7 +45,6 @@ def evaluate_entropy(models_to_evaluate, test_loader, device):
         total_batches = 0
 
         with torch.no_grad():
-            # We can ignore labels (_) since we are calculating overall entropy
             for images, _ in test_loader:
                 images = images.to(device)
                 outputs = model(images)
@@ -69,7 +60,6 @@ def evaluate_entropy(models_to_evaluate, test_loader, device):
                     
                 total_batches += 1
 
-        # Calculate and print the averages
         print(f"\n--- {model_name} ---")
         for exit_name, ent_sum in total_entropy.items():
             avg_entropy = ent_sum / total_batches
@@ -84,7 +74,7 @@ def main():
     save_dir = 'Hypothesis 3/saved_models'
 
     # =========================================================================
-    # COMMENTED BLOCK: ResNet-50 on BloodMNIST
+    # ResNet-50 on BloodMNIST
     # =========================================================================
     print("Loading BloodMNIST test dataloader...")
     _, _, test_loader, in_channels, num_classes = get_medmnist_dataloaders(data_flag='bloodmnist', batch_size=128)
@@ -109,7 +99,7 @@ def main():
     ]
 
     # =========================================================================
-    # ACTIVE BLOCK: ResNet-18 on Chest X-Ray
+    # ResNet-18 on Chest X-Ray
     # =========================================================================
     # print("Loading Chest X-Ray test dataloader...")
     # data_dir = 'Hypothesis 3/data/chest_xray/chest_xray'

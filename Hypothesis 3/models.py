@@ -27,10 +27,10 @@ class SelfDistillationResNet18(nn.Module):
         self.relu = base_model.relu
         # We skip the maxpool to preserve spatial resolution for small images
 
-        self.layer1 = base_model.layer1 # 64 channels
-        self.layer2 = base_model.layer2 # 128 channels
-        self.layer3 = base_model.layer3 # 256 channels
-        self.layer4 = base_model.layer4 # 512 channels
+        self.layer1 = base_model.layer1
+        self.layer2 = base_model.layer2
+        self.layer3 = base_model.layer3
+        self.layer4 = base_model.layer4
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
@@ -38,16 +38,12 @@ class SelfDistillationResNet18(nn.Module):
         self.classifier1 = nn.Linear(64, num_classes)
         self.classifier2 = nn.Linear(128, num_classes)
         self.classifier3 = nn.Linear(256, num_classes)
-        self.classifier4 = nn.Linear(512, num_classes) # Deepest (Teacher)
-
-        # Bottlenecks to align feature maps (F_i) to deepest feature map (F_C) which is 512 channels
-        # layer1 out: 64ch, spatial 32x32 -> needs to match layer4 out: 512ch, spatial 4x4 (downsample 8x)
+        self.classifier4 = nn.Linear(512, num_classes)
         self.bottleneck1 = ProjectionBottleneck(64, 512, downsample_factor=8)
         self.bottleneck2 = ProjectionBottleneck(128, 512, downsample_factor=4)
         self.bottleneck3 = ProjectionBottleneck(256, 512, downsample_factor=2)
 
     def forward(self, x):
-        # Base features
         x = self.relu(self.bn1(self.conv1(x)))
 
         # Exit 1
@@ -68,7 +64,7 @@ class SelfDistillationResNet18(nn.Module):
         # Exit 4 (Deepest / Teacher)
         f4 = self.layer4(f3)
         out4 = self.classifier4(self.avgpool(f4).flatten(1))
-        b4 = f4 # Already at target dimension
+        b4 = f4
 
         logits = [out1, out2, out3, out4]
         bottlenecks = [b1, b2, b3, b4]
@@ -176,7 +172,6 @@ class BaselineResNet50(nn.Module):
 class SelfDistillationResNet18_H10k(nn.Module):
     def __init__(self, num_classes=7, in_channels=3):
         super().__init__()
-        # Load base ResNet18
         base_model = resnet18(weights=None)
 
         # Standard ResNet18 initial layers for 224x224 images
@@ -185,10 +180,10 @@ class SelfDistillationResNet18_H10k(nn.Module):
         self.relu = base_model.relu
         self.maxpool = base_model.maxpool
 
-        self.layer1 = base_model.layer1 # 64 channels
-        self.layer2 = base_model.layer2 # 128 channels
-        self.layer3 = base_model.layer3 # 256 channels
-        self.layer4 = base_model.layer4 # 512 channels
+        self.layer1 = base_model.layer1
+        self.layer2 = base_model.layer2
+        self.layer3 = base_model.layer3
+        self.layer4 = base_model.layer4
 
         self.avgpool = base_model.avgpool
 
@@ -198,15 +193,11 @@ class SelfDistillationResNet18_H10k(nn.Module):
         self.classifier3 = nn.Linear(256, num_classes)
         self.classifier4 = nn.Linear(512, num_classes) # Deepest (Teacher)
 
-        # Bottlenecks to align feature maps
-        # The downsample factors remain identical because the relative spatial 
-        # reduction between layers is exactly the same as the 32x32 version.
         self.bottleneck1 = ProjectionBottleneck(64, 512, downsample_factor=8)
         self.bottleneck2 = ProjectionBottleneck(128, 512, downsample_factor=4)
         self.bottleneck3 = ProjectionBottleneck(256, 512, downsample_factor=2)
 
     def forward(self, x):
-        # Base features (now includes maxpool)
         x = self.maxpool(self.relu(self.bn1(self.conv1(x))))
 
         # Exit 1
@@ -227,7 +218,7 @@ class SelfDistillationResNet18_H10k(nn.Module):
         # Exit 4 (Deepest / Teacher)
         f4 = self.layer4(f3)
         out4 = self.classifier4(self.avgpool(f4).flatten(1))
-        b4 = f4 # Already at target dimension
+        b4 = f4
 
         logits = [out1, out2, out3, out4]
         bottlenecks = [b1, b2, b3, b4]

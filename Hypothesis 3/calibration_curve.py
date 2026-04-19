@@ -4,11 +4,10 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 
-# Adjust imports based on your dataset (HAM10000 or Chest X-Ray)
 from datasets import get_medmnist_dataloaders, get_chestxray_dataloaders
 from models import Baseline_Resnet18_H10k, SelfDistillationResNet18_H10k, BaselineResNet50, SelfDistillationResNet50
 
-def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn, num_bins=50):
+def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn, flag, num_bins=50):
     """
     Plots class-wise (One-vs-All) calibration curves, overlaying different models 
     on the same plot for direct comparison.
@@ -17,10 +16,12 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
     print(f"Using device: {device}")
 
     print(f"Loading dataloader from {data_dir}...")
-    _, _, test_loader, n_channels, n_classes = get_dataloader_fn(data_dir, batch_size=128)
+    if flag == "chestxray":
+        _, _, test_loader, n_channels, n_classes = get_dataloader_fn(data_dir, batch_size=128)
+    elif flag == "bloodmnist":
+        _, _, test_loader, n_channels, n_classes = get_dataloader_fn(data_flag='bloodmnist', batch_size=128)
     print(f"Test data loaded. Detected {n_classes} classes.")
 
-    # --- 1. Gather Predictions for All Models ---
     model_results = []
 
     for model_info in models_to_plot:
@@ -35,7 +36,6 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
             model.load_state_dict(torch.load(model_path, map_location=device))
         except Exception as e:
             try:
-                # Handle DataParallel wrapper
                 state_dict = torch.load(model_path, map_location=device)
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
@@ -58,7 +58,7 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
                 
                 if isinstance(outputs, tuple) and len(outputs) == 2:
                     logits, _ = outputs
-                    final_logits = logits[-1] # Deepest exit
+                    final_logits = logits[-1]
                 elif isinstance(outputs, torch.Tensor):
                     final_logits = outputs
                 else:
@@ -70,18 +70,16 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
 
         model_results.append({
             'name': model_name,
-            'probs': np.array(all_probabilities), # Shape: (N, C)
-            'labels': np.array(all_labels)        # Shape: (N,)
+            'probs': np.array(all_probabilities),
+            'labels': np.array(all_labels)
         })
         print(f"Finished evaluation for {model_name}.")
 
-    # --- 2. Dynamic Subplot Grid ---
     cols = min(n_classes, 3)
     rows = math.ceil(n_classes / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows), sharey=True, sharex=True)
     fig.suptitle('Baseline vs. Self-Distilled: Class-wise Calibration', fontsize=18, y=1.02)
     
-    # Handle the case where n_classes is 1 (axes isn't an array)
     if n_classes == 1:
         axes = [axes]
     else:
@@ -91,9 +89,8 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
     bin_lowers = bin_boundaries[:-1]
     bin_uppers = bin_boundaries[1:]
     
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'] # Standard distinct colors
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
 
-    # --- 3. Compute and Plot Overlaid Curves ---
     for c in range(n_classes):
         ax = axes[c]
         
@@ -113,19 +110,15 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
                     bin_fraction_of_positives[j] = np.mean(class_targets[in_bin])
                     bin_avg_confidence[j] = np.mean(class_probs[in_bin])
             
-            # ECE Calculation
             ece = np.sum((bin_counts / len(class_targets)) * np.abs(bin_fraction_of_positives - bin_avg_confidence))
             
-            # Plot Model Curve
             non_empty_bins = bin_counts > 0
             ax.plot(bin_avg_confidence[non_empty_bins], bin_fraction_of_positives[non_empty_bins], 
                     marker='o', linestyle='', color=colors[idx % len(colors)], 
                     label=f'{res["name"]} (ECE: {ece:.4f})')
 
-        # Add Ideal Line
         ax.plot([0, 1], [0, 1], 'k--', label='Ideal Calibration', alpha=0.7)
 
-        # Subplot Formatting
         ax.set_title(f'Class {c}')
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
@@ -138,7 +131,6 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
         
         ax.legend(fontsize=9)
 
-    # Hide unused subplots
     for extra_ax in axes[n_classes:]:
         extra_ax.set_visible(False)
 
@@ -149,16 +141,14 @@ def plot_model_comparison_classwise(models_to_plot, data_dir, get_dataloader_fn,
     print(f"\nSaved comparison figure to {save_path}")
     plt.show()
 
-# ==========================================
-# STANDALONE EXECUTION BLOCK
-# ==========================================
 if __name__ == "__main__":
     print("\n--- Starting Head-to-Head Calibration Evaluation ---")
-    
     save_dir = 'Hypothesis 3/saved_models'
-    data_directory = 'Hypothesis 3/data/chest_xray' # Adjust if using HAM10000
+
+    # For Resnet18 - ChestXRay
+    data_directory = 'Hypothesis 3/data/chest_xray'
     dataloader_function = get_chestxray_dataloaders
-    
+    flag = "chestxray"
     models_to_evaluate = [
         {
             'path': os.path.join(save_dir, 'resnet18_chestxray_baseline_best.pth'),
@@ -173,8 +163,26 @@ if __name__ == "__main__":
         }
     ]
     
+    # # For Resnet50 - BloodMNIST
+    # dataloader_function = get_medmnist_dataloaders
+    # flag = "bloodmnist"
+    # models_to_evaluate = [
+    #     {
+    #         'path': os.path.join(save_dir, 'resnet50_bloodmnist_baseline_best.pth'),
+    #         'class': BaselineResNet50,
+
+    #         'name': 'Baseline'
+    #     },
+    #     {
+    #         'path': os.path.join(save_dir, 'resnet50_bloodmnist_self_distilled_best.pth'),
+    #         'class': SelfDistillationResNet50,
+    #         'name': 'Self-Distilled'
+    #     }
+    # ]
+    
     plot_model_comparison_classwise(
         models_to_plot=models_to_evaluate, 
         data_dir=data_directory, 
-        get_dataloader_fn=dataloader_function
+        get_dataloader_fn=dataloader_function,
+        flag=flag
     )
