@@ -49,7 +49,8 @@ In high-stakes domains like medical imaging, overconfident neural networks are d
 │   ├── calibration_curve.py         # Reliability diagram plotting utilities
 │   └── measure.py / entropy.py      # ECE, NLL, Brier Score, and predictive entropy metrics
 │
-├── AIML_SKKAR_Project_Report.pdf    # Full comprehensive paper
+├── Project_Report.pdf               # Full comprehensive paper
+|── Project_Presentation             # Slides for project presentation
 ├── requirements.txt                 # Master dependencies file
 └── README.md                        # Master repository overview
 ```
