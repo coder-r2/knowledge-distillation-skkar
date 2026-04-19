@@ -28,7 +28,7 @@ In high-stakes domains like medical imaging, overconfident neural networks are d
 * 🔗 *[See `Hypothesis 3` directory for training scripts, calibration curve generation, and CKA analysis]*
 
 ## 📂 Repository Structure
-'''text
+```text
 ├── Hypothesis 1/                    # Dark Knowledge & Heterogeneous Distillation
 │   ├── Dark Knowledge Transfer in Heterogenous Distillation/
 │   │   ├── train_vit-cnn_mgd.py     # Primary MGD ViT->CNN pipeline
@@ -52,7 +52,7 @@ In high-stakes domains like medical imaging, overconfident neural networks are d
 ├── AIML_SKKAR_Project_Report.pdf    # Full comprehensive paper
 ├── requirements.txt                 # Master dependencies file
 └── README.md                        # Master repository overview
-'''
+```
 
 ## 🛠️ Quick Start
 
