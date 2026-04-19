@@ -68,9 +68,9 @@ cd "Hypothesis 3"
 python train_sd.py
 
 ## 👥 Team S.K.K.A.R.
-* **Abinav T S**
+* **Abinav Thangaraju Sethupathy**
 * **Rishe Raghavendira G**
-* **AS Kretik**
+* **Kretik AS**
 * **Khaja Aflal H**
 * **CV Sai Charan**
 
