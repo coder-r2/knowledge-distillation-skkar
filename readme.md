@@ -50,7 +50,7 @@ In high-stakes domains like medical imaging, overconfident neural networks are d
 │   └── measure.py / entropy.py      # ECE, NLL, Brier Score, and predictive entropy metrics
 │
 ├── Project_Report.pdf               # Full comprehensive paper
-|── Project_Presentation             # Slides for project presentation
+|── Project_Presentation.pdf         # Slides for project presentation
 ├── requirements.txt                 # Master dependencies file
 └── README.md                        # Master repository overview
 ```
