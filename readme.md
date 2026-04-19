@@ -57,7 +57,7 @@ In high-stakes domains like medical imaging, overconfident neural networks are d
 ## 🛠️ Quick Start
 
 **1. Clone the repository and install dependencies:**
-git clone https://github.com/[your-username]/knowledge-distillation-skkar.git
+git clone https://github.com/coder-r2/knowledge-distillation-skkar.git
 cd knowledge-distillation-skkar
 pip install -r requirements.txt
 
@@ -68,8 +68,8 @@ python train_sd.py
 
 ## 👥 Team S.K.K.A.R.
 * **Abinav T S**
-* **Rishe Raghavendira G AS**
-* **Kretik**
+* **Rishe Raghavendira G**
+* **AS Kretik**
 * **Khaja Aflal H**
 * **CV Sai Charan**
 
